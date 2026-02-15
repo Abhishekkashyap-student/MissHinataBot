@@ -8,7 +8,7 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
-# --- LOGGING ON (Error pakdne ke liye) ---
+# --- LOGGING ON (Jasoosi Mode) ---
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -17,61 +17,76 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 TOKEN = os.getenv("BOT_TOKEN")
-# Keys ko safai se split karenge
 GROQ_KEYS = [k.strip() for k in os.getenv("GROQ_API_KEY", "").split(",") if k.strip()]
+OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
 
 if not TOKEN:
     logger.critical("❌ BOT_TOKEN missing!")
     exit(1)
 
-# --- AI LOGIC (MULTI-MODEL JUTSU) ---
-def get_groq_response(text):
-    if not GROQ_KEYS: return "No API Keys found! 🌸"
-    
+# --- AI LOGIC (DUAL ENGINE) ---
+def get_ai_response(text):
     # Hinata Persona
     messages = [
-        {"role": "system", "content": "You are Hinata Hyuga from Naruto. You are a real girl, shy, caring, and polite. You call the user 'Naruto-kun'. Keep answers short and human-like. Do not sound like an AI."},
+        {"role": "system", "content": "You are Hinata Hyuga from Naruto. Real girl, shy, caring. Call user 'Naruto-kun'. Keep answers short/cute. NO AI talk."},
         {"role": "user", "content": text}
     ]
 
-    # Models List (Agar ek fail ho toh dusra try kare)
-    models = [
-        "llama-3.3-70b-versatile",  # Newest & Smartest
-        "llama-3.1-8b-instant",     # Fastest
-        "mixtral-8x7b-32768"        # Reliable Backup
-    ]
-
-    for key in GROQ_KEYS:
-        # Har key ke saath har model try karenge
-        for model in models:
-            try:
-                url = "https://api.groq.com/openai/v1/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json"
-                }
-                data = {
-                    "model": model,
-                    "messages": messages,
-                    "max_tokens": 200,
-                    "temperature": 0.7
-                }
-                
-                # Timeout badha diya taaki connection drop na ho
-                response = requests.post(url, headers=headers, json=data, timeout=10)
-                
-                if response.status_code == 200:
-                    return response.json()['choices'][0]['message']['content']
-                else:
-                    # Log error to Koyeb Console (Tujhe dikhega kya galti hai)
-                    logger.error(f"⚠️ Key failed on {model}: {response.status_code} - {response.text}")
+    # 🔥 ENGINE 1: GROQ (Speed)
+    if GROQ_KEYS:
+        # Models: Latest Llama 3.3 -> Old Llama 3.1 -> Mixtral
+        groq_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
+        
+        for key in GROQ_KEYS:
+            for model in groq_models:
+                try:
+                    url = "https://api.groq.com/openai/v1/chat/completions"
+                    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+                    data = {"model": model, "messages": messages, "max_tokens": 200}
+                    
+                    response = requests.post(url, headers=headers, json=data, timeout=8)
+                    
+                    if response.status_code == 200:
+                        logger.info(f"✅ Success with Groq ({model})")
+                        return response.json()['choices'][0]['message']['content']
+                    else:
+                        logger.warning(f"⚠️ Groq {model} Failed: {response.status_code}")
+                except Exception as e:
+                    logger.error(f"❌ Groq Error: {e}")
                     continue
 
+    # 🔥 ENGINE 2: OPENROUTER (Backup)
+    if OPENROUTER_KEY:
+        logger.info("🔄 Switching to OpenRouter Backup...")
+        # Free Models on OpenRouter
+        or_models = [
+            "google/gemini-2.0-flash-lite-preview-02-05:free",
+            "meta-llama/llama-3-8b-instruct:free",
+            "mistralai/mistral-7b-instruct:free"
+        ]
+        
+        for model in or_models:
+            try:
+                url = "https://openrouter.ai/api/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {OPENROUTER_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://telegram.org", 
+                }
+                data = {"model": model, "messages": messages}
+                
+                response = requests.post(url, headers=headers, json=data, timeout=15)
+                
+                if response.status_code == 200:
+                    logger.info(f"✅ Success with OpenRouter ({model})")
+                    return response.json()['choices'][0]['message']['content']
+                else:
+                    logger.warning(f"⚠️ OpenRouter {model} Failed: {response.status_code} - {response.text}")
             except Exception as e:
-                logger.error(f"❌ Connection Error: {e}")
+                logger.error(f"❌ OpenRouter Error: {e}")
                 continue
 
-    return "Gomen nasai... I can't connect right now. (Check Logs) 🌸"
+    return "Gomen nasai... my chakra is completely drained. (Check Logs) 🌸"
 
 # --- WEB SERVER (Life Support) ---
 app = Flask('')
@@ -90,9 +105,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     await update.message.reply_text("N-Naruto-kun? 😳\nI am ready! 🌸")
 
-async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⚡ Pong!")
-
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
     
@@ -104,8 +116,8 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_private or has_name or is_reply:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        # Run AI in thread to avoid blocking
-        reply = get_groq_response(update.message.text)
+        # Running AI logic in a way that doesn't block the bot
+        reply = get_ai_response(update.message.text)
         await update.message.reply_text(reply)
 
 # --- MAIN ---
@@ -114,7 +126,6 @@ if __name__ == '__main__':
     application = ApplicationBuilder().token(TOKEN).build()
     
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('ping', ping))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
     
     print("🚀 BOT STARTED SUCCESSFULLY!")
