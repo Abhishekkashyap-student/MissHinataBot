@@ -15,6 +15,13 @@ from pyrogram.types import Message, ChatPermissions
 # built-in SQLite for conversation memory
 import sqlite3
 
+# optional local model for offline/backup responses
+try:
+    from transformers import pipeline
+    _local_generator = pipeline("text-generation", model="gpt2")
+except Exception:
+    _local_generator = None
+
 # ---------- environment variables ----------
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
@@ -110,22 +117,43 @@ STICKERS = [
 
 # ---------- Groq API helper ----------
 async def query_groq(prompt: str) -> str:
-    """Send a prompt to Groq Llama 3 and return text. Raises on failure."""
-    if not GROQ_API_KEY:
-        raise RuntimeError("Missing GROQ_API_KEY")
+    """Try Groq first; if unavailable or fails, fall back to local generator.
 
-    url = "https://api.groq.com/v1/models/llama-3-952m/generate"
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    payload = {"input": prompt, "max_output_tokens": 500}
+    The local model uses GPT-2 via transformers and requires no API key,
+    providing unlimited offline responses. This keeps the bot alive even if
+    remote service limits are reached.
+    """
+    # attempt remote
+    if GROQ_API_KEY:
+        try:
+            url = "https://api.groq.com/v1/models/llama-3-952m/generate"
+            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+            payload = {"input": prompt, "max_output_tokens": 500}
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload, timeout=30) as resp:
-            text = await resp.text()
-            if resp.status != 200:
-                raise RuntimeError(f"Groq API error {resp.status}: {text}")
-            data = await resp.json()
-            out = "".join([o.get("content", "") for o in data.get("output", [])])
-            return out.strip()
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload, timeout=30) as resp:
+                    text = await resp.text()
+                    if resp.status != 200:
+                        raise RuntimeError(f"Groq API error {resp.status}: {text}")
+                    data = await resp.json()
+                    out = "".join([o.get("content", "") for o in data.get("output", [])])
+                    return out.strip()
+        except Exception:
+            # log but continue to local fallback
+            logger.warning("Groq call failed, falling back to local model")
+    # local fallback
+    if _local_generator:
+        def sync_gen():
+            try:
+                res = _local_generator(prompt, max_length=200, num_return_sequences=1)
+                return res[0]["generated_text"]
+            except Exception:
+                return ""
+        loop = asyncio.get_event_loop()
+        text = await loop.run_in_executor(None, sync_gen)
+        if text:
+            return text
+    raise RuntimeError("No available AI model")
 
 
 # ---------- SQLite helpers for conversation memory ----------

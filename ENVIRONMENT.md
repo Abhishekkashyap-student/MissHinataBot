@@ -8,8 +8,8 @@ Imagine the bot is a little robot that needs a few keys to start working. These 
 
 | Variable | What it tells the bot | Example (do not use) |
 |----------|-----------------------|----------------------|
-| `API_ID` | Your Telegram application ID (from my.telegram.org) | `123456` |
-| `API_HASH` | Your Telegram application hash (from my.telegram.org) | `abcdef123456` |
+| `API_ID` | Your Telegram app ID. Even though the bot has a token, Pyrogram (and other user‑session libraries) still need your app credentials to connect – these come from https://my.telegram.org on the API development tools page. | `123456` |
+| `API_HASH` | The corresponding app hash from the same page. It proves you own the application and is required along with API_ID. | `abcdef123456` |
 | `BOT_TOKEN` | The token you get when you create a bot with @BotFather | `1234:ABCD...` |
 | `GROQ_API_KEY` | A secret key used to ask the Groq AI model to chat | `sk-xxxx` |
 
