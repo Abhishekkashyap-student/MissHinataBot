@@ -40,16 +40,14 @@ To retain past conversations and give the bot context, the project can use Fireb
 
 If `firebase-admin` is not installed or credentials are missing, the bot will simply operate without memory.
 
-## GIF Support (Tenor)
+## GIF Support
 
-The bot can optionally send Naruto/Hinata/Kakashi GIFs when users say keywords or compliment it. To enable this behavior set `TENOR_API_KEY` to your free Tenor developer key (https://tenor.com/gifapi).
-
+The bot randomly sends Naruto/Hinata/Kakashi GIFs using a small built-in list of free URLs. No API key or setup is required – the feature works out of the box.
 ## Environment Variables Recap
 
 - `API_ID`, `API_HASH` (from my.telegram.org)
 - `BOT_TOKEN` (Telegram bot token)
 - `GROQ_API_KEY` (for Llama 3)
-- `TENOR_API_KEY` (optional, for GIFs)
 - `FIREBASE_JSON` or `FIREBASE_CRED_PATH` (optional, for memory)
 
 ---

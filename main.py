@@ -25,7 +25,6 @@ API_HASH = os.getenv("API_HASH", "")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-TENOR_API_KEY = os.getenv("TENOR_API_KEY", "")
 
 # firebase credentials can be provided as JSON string or path
 FIREBASE_JSON = os.getenv("FIREBASE_JSON", "")
@@ -207,30 +206,27 @@ async def simulate_typing(chat_id: int, text: str):
 
 
 async def maybe_send_gif(message: Message):
-    if not TENOR_API_KEY:
-        return
+    """Send a random pre‑selected gif when certain keywords appear.
+
+    This avoids using an API key by hardcoding a small set of publicly
+    accessible gif URLs from Tenor/other sources.
+    """
     text = (message.text or "").lower()
     triggers = ["naruto", "hinata", "kakashi", "wow", "nice", "good", "love"]
     if not any(t in text for t in triggers):
         return
     if random.random() > 0.3:
         return
-    if "kakashi" in text:
-        q = "kakashi naruto"
-    elif "hinata" in text or "naruto" in text:
-        q = "hinata naruto"
-    else:
-        q = random.choice(["naruto gif", "anime gif"])
-    url = f"https://tenor.googleapis.com/v2/search?q={q}&key={TENOR_API_KEY}&limit=1"
+
+    GIFS = [
+        # example gifs; these should work without any API key
+        "https://media.tenor.com/images/5b6e2ebba1e1f9d5c3d7f3f1e2a69307/tenor.gif",  # hinata shy
+        "https://media.tenor.com/images/7166c6a1a5f3d8b2ef7411bdc6fd7c5e/tenor.gif",  # naruto laugh
+        "https://media.tenor.com/images/2ad6b1c6f3c7a9edf8b702bcb7e7c6e4/tenor.gif",  # kakashi cool
+    ]
+    gif_url = random.choice(GIFS)
     try:
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get(url) as resp:
-                data = await resp.json()
-                results = data.get("results")
-                if results:
-                    gif_url = results[0].get("media_formats", {}).get("gif", {}).get("url")
-                    if gif_url:
-                        await message.reply_animation(gif_url)
+        await message.reply_animation(gif_url)
     except Exception:
         pass
 
