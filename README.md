@@ -26,7 +26,14 @@ pip install -r requirements.txt
 python main.py
 ```
 
-For deployment on platforms like Koyeb, wrap the application in a Docker container.
+For deployment on platforms like Koyeb or other container hosts, a `Dockerfile` is included. Build and test locally with:
+
+```bash
+docker build -t miss-hinata-bot .
+docker run --rm -e API_ID=... -e API_HASH=... -e BOT_TOKEN=... -e GROQ_API_KEY=... miss-hinata-bot
+```
+
+Koyeb automatically builds from your repository if a `Dockerfile` is present. Be sure to add your environment variables through the Koyeb dashboard or CLI so the container can start successfully.
 
 ---
 

@@ -474,9 +474,12 @@ async def chat_handler(client: Client, message: Message):
 
 if __name__ == "__main__":
     # keep process alive even after exceptions
+    import time  # used for simple sleeping in main loop
+
     while True:
         try:
             app.run()
         except Exception:
             logger.exception("Bot crashed, restarting in 5 seconds...")
-            asyncio.sleep(5)
+            # use time.sleep in synchronous context to avoid unawaited coroutine
+            time.sleep(5)
