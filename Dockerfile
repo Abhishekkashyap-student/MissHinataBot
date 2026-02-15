@@ -5,15 +5,14 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install requirements
+# Requirements install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy code
+# Code copy
 COPY . .
 
-# Expose Port for Koyeb Health Check
+# 🔥 Port 8000 expose karna zaroori hai Koyeb Web Service ke liye
 EXPOSE 8000
 
-# Start Bot
 CMD ["python", "main.py"]
