@@ -3,36 +3,37 @@ import asyncio
 import aiohttp
 import logging
 from aiohttp import web
-from pyrogram import Client, filters, idle
+from pyrogram import Client, filters, idle, enums
 
-# --- LOGGING ---
-logging.basicConfig(level=logging.INFO)
+# --- LOGGING ON (Sab kuch dikhega) ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION ---
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-GROQ_KEYS = os.getenv("GROQ_API_KEY", "").split(",")
+# --- VARIABLES ---
+try:
+    API_ID = int(os.getenv("API_ID"))
+    API_HASH = os.getenv("API_HASH")
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    GROQ_KEYS = os.getenv("GROQ_API_KEY", "").split(",")
+    print(f"✅ Variables Loaded: API_ID={API_ID}, Token=...{BOT_TOKEN[-5:]}")
+except Exception as e:
+    print(f"❌ Variable Error: {e}")
+    exit(1)
 
-# --- HINATA PERSONA ---
-HINATA_PROMPT = """You are Hinata Hyuga from Naruto.
-Identity:
-- You are a real girl using Telegram.
-- You are shy, polite, gentle, and deeply caring.
-- You stutter slightly ('a-ano...', 'e-eto...') when nervous.
-- If asked about creator: "Created by FigletAxl. Join @vfriendschat 🌸"
-- Keep answers short and cute.
-"""
-
+# --- CLIENT ---
 app = Client("miss_hinata", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # --- AI LOGIC ---
 async def get_groq_response(text):
-    if not GROQ_KEYS or not GROQ_KEYS[0]:
-        return "A-ano... keys missing... 🌸"
-
-    messages = [{"role": "system", "content": HINATA_PROMPT}, {"role": "user", "content": text}]
+    if not GROQ_KEYS: return "No API Keys found!"
+    
+    messages = [
+        {"role": "system", "content": "You are Hinata Hyuga. Reply shortly and cutely."},
+        {"role": "user", "content": text}
+    ]
 
     for key in GROQ_KEYS:
         if not key.strip(): continue
@@ -41,54 +42,54 @@ async def get_groq_response(text):
                 async with session.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {key.strip()}"},
-                    json={"model": "llama3-8b-8192", "messages": messages, "temperature": 0.7, "max_tokens": 200},
+                    json={"model": "llama3-8b-8192", "messages": messages, "max_tokens": 100},
                     timeout=5
                 ) as response:
                     if response.status == 200:
-                        data = await response.json()
-                        return data['choices'][0]['message']['content']
+                        return (await response.json())['choices'][0]['message']['content']
         except: continue
-    return "Gomen nasai... network error. 🌸"
+    return "Network Error 🌸"
 
-# --- WEB SERVER (KOYEB LIFE SUPPORT) ---
+# --- WEB SERVER (Koyeb Fix) ---
 async def web_server():
-    async def handle(request):
-        return web.Response(text="HINATA IS ALIVE!")
-    
-    # Port 8000 par server chalega
-    web_app = web.Application()
-    web_app.router.add_get("/", handle)
-    runner = web.AppRunner(web_app)
+    async def handle(request): return web.Response(text="ALIVE")
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8000)
-    await site.start()
-    logger.info("✅ Web Server started on Port 8000")
+    await web.TCPSite(runner, "0.0.0.0", 8000).start()
+    print("✅ Web Server started on Port 8000")
 
-# --- HANDLERS ---
+# --- HANDLERS (SIMPLE) ---
+
 @app.on_message(filters.command("start"))
 async def start(c, m):
-    await m.reply_text("N-Naruto-kun? 😳\nI am ready! 🌸")
+    print(f"📩 START COMMAND RECEIVED from {m.from_user.first_name}")
+    await m.reply_text(f"N-Naruto-kun? I am connected! 🌸\nID: `{m.chat.id}`")
 
 @app.on_message(filters.command("ping"))
 async def ping(c, m):
-    await m.reply_text("⚡ _Byakugan!_ Pong!")
+    print("📩 PING COMMAND RECEIVED")
+    await m.reply_text("⚡ Pong! Baryon Mode Active.")
 
-@app.on_message(filters.text & ~filters.bot)
+# Catch-All Handler (Har text message par chalega)
+@app.on_message(filters.text)
 async def chat(c, m):
-    is_private = m.chat.type.name == "PRIVATE"
-    has_name = "hinata" in m.text.lower()
-    is_reply = m.reply_to_message and m.reply_to_message.from_user.id == c.me.id
+    print(f"📩 TEXT RECEIVED: {m.text} | Type: {m.chat.type}")
     
-    if is_private or has_name or is_reply:
-        await c.send_chat_action(m.chat.id, "typing")
-        reply = await get_groq_response(m.text)
-        await m.reply_text(reply)
+    # Typing dikhao
+    await c.send_chat_action(m.chat.id, enums.ChatAction.TYPING)
+    
+    # Reply karo
+    reply = await get_groq_response(m.text)
+    await m.reply_text(reply)
 
 # --- MAIN ---
 async def main():
-    await web_server() # Start fake server first
-    await app.start()  # Then start bot
-    logger.info("🚀 BOT STARTED")
+    await web_server()
+    print("🔄 Starting Bot Client...")
+    await app.start()
+    print("🚀 BOT STARTED SUCCESSFULLY! GO CHECK TELEGRAM.")
     await idle()
     await app.stop()
 
