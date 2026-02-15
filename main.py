@@ -5,35 +5,34 @@ import logging
 from aiohttp import web
 from pyrogram import Client, filters, idle, enums
 
-# --- LOGGING ON (Sab kuch dikhega) ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# --- LOGGING ON ---
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- VARIABLES ---
-try:
-    API_ID = int(os.getenv("API_ID"))
-    API_HASH = os.getenv("API_HASH")
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    GROQ_KEYS = os.getenv("GROQ_API_KEY", "").split(",")
-    print(f"✅ Variables Loaded: API_ID={API_ID}, Token=...{BOT_TOKEN[-5:]}")
-except Exception as e:
-    print(f"❌ Variable Error: {e}")
-    exit(1)
+# --- CONFIGURATION ---
+API_ID = int(os.getenv("API_ID", "0"))
+API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+GROQ_KEYS = os.getenv("GROQ_API_KEY", "").split(",")
 
-# --- CLIENT ---
 app = Client("miss_hinata", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# --- WEB SERVER ---
+async def web_server():
+    async def handle(request): return web.Response(text="ALIVE")
+    web_app = web.Application()
+    web_app.router.add_get("/", handle)
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", 8000).start()
+    logger.info("✅ Web Server started")
 
 # --- AI LOGIC ---
 async def get_groq_response(text):
-    if not GROQ_KEYS: return "No API Keys found!"
+    if not GROQ_KEYS or not GROQ_KEYS[0]: return "Keys missing!"
     
-    messages = [
-        {"role": "system", "content": "You are Hinata Hyuga. Reply shortly and cutely."},
-        {"role": "user", "content": text}
-    ]
+    # Simple Prompt for Testing
+    messages = [{"role": "user", "content": text}]
 
     for key in GROQ_KEYS:
         if not key.strip(): continue
@@ -46,50 +45,37 @@ async def get_groq_response(text):
                     timeout=5
                 ) as response:
                     if response.status == 200:
-                        return (await response.json())['choices'][0]['message']['content']
+                        data = await response.json()
+                        return data['choices'][0]['message']['content']
         except: continue
-    return "Network Error 🌸"
+    return "Network Error"
 
-# --- WEB SERVER (Koyeb Fix) ---
-async def web_server():
-    async def handle(request): return web.Response(text="ALIVE")
-    app = web.Application()
-    app.router.add_get("/", handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", 8000).start()
-    print("✅ Web Server started on Port 8000")
+# --- DEBUG HANDLER (SAB KUCH PAKDEGA) ---
+@app.on_message()
+async def debug_handler(client, message):
+    # 1. Log to Console (Koyeb Logs mein dikhega)
+    logger.info(f"📩 RECEIVED: {message.text} | FROM: {message.chat.id}")
 
-# --- HANDLERS (SIMPLE) ---
+    # 2. Typing Action (Proof ki bot zinda hai)
+    await client.send_chat_action(message.chat.id, enums.ChatAction.TYPING)
 
-@app.on_message(filters.command("start"))
-async def start(c, m):
-    print(f"📩 START COMMAND RECEIVED from {m.from_user.first_name}")
-    await m.reply_text(f"N-Naruto-kun? I am connected! 🌸\nID: `{m.chat.id}`")
-
-@app.on_message(filters.command("ping"))
-async def ping(c, m):
-    print("📩 PING COMMAND RECEIVED")
-    await m.reply_text("⚡ Pong! Baryon Mode Active.")
-
-# Catch-All Handler (Har text message par chalega)
-@app.on_message(filters.text)
-async def chat(c, m):
-    print(f"📩 TEXT RECEIVED: {m.text} | Type: {m.chat.type}")
-    
-    # Typing dikhao
-    await c.send_chat_action(m.chat.id, enums.ChatAction.TYPING)
-    
-    # Reply karo
-    reply = await get_groq_response(m.text)
-    await m.reply_text(reply)
+    # 3. Simple Reply Logic
+    if message.text:
+        # Check Commands
+        if message.text.startswith("/start"):
+            await message.reply_text("✨ I am Alive Naruto-kun!")
+        elif message.text.startswith("/ping"):
+            await message.reply_text("⚡ Pong!")
+        else:
+            # AI Reply
+            reply = await get_groq_response(message.text)
+            await message.reply_text(reply)
 
 # --- MAIN ---
 async def main():
     await web_server()
-    print("🔄 Starting Bot Client...")
     await app.start()
-    print("🚀 BOT STARTED SUCCESSFULLY! GO CHECK TELEGRAM.")
+    logger.info("🚀 BOT STARTED - WAITING FOR MESSAGES")
     await idle()
     await app.stop()
 
