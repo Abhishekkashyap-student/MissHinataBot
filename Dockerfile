@@ -1,28 +1,19 @@
-# Dockerfile for running Miss Hinata Bot
-# This image is suitable for deployment on Koyeb or any container platform.
+FROM python:3.10-slim
 
-FROM python:3.11-slim
+# System updates
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
-# create non-root user to run the bot (optional but recommended)
-RUN useradd --create-home appuser
-WORKDIR /home/appuser
+WORKDIR /app
 
-# copy requirements and install dependencies
-COPY requirements.txt ./
+# Install requirements
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# copy application code
-COPY . ./
+# Copy code
+COPY . .
 
-# set the working directory for runtime
-WORKDIR /home/appuser
+# Expose Port for Koyeb Health Check
+EXPOSE 8000
 
-# make sure database is persisted outside the container if using volumes
-VOLUME ["/home/appuser/data.db"]
-
-# environment variables recommendation
-ENV PYTHONUNBUFFERED=1
-
-# run the bot
-USER appuser
+# Start Bot
 CMD ["python", "main.py"]
