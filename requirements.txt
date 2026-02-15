@@ -3,3 +3,5 @@ flask
 requests
 aiohttp
 colorama
+motor
+dnspython
