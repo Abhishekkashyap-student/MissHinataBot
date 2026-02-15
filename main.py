@@ -12,15 +12,16 @@ import aiohttp
 from pyrogram import Client, filters
 from pyrogram.types import Message, ChatPermissions
 
+# offline text generator fallback
+try:
+    from transformers import pipeline, set_seed
+    _generator = pipeline("text-generation", model="distilgpt2")
+    set_seed(42)
+except Exception:
+    _generator = None
+
 # built-in SQLite for conversation memory
 import sqlite3
-
-# optional local model for offline/backup responses
-try:
-    from transformers import pipeline
-    _local_generator = pipeline("text-generation", model="gpt2")
-except Exception:
-    _local_generator = None
 
 # ---------- environment variables ----------
 API_ID = int(os.getenv("API_ID", "0"))
@@ -117,43 +118,22 @@ STICKERS = [
 
 # ---------- Groq API helper ----------
 async def query_groq(prompt: str) -> str:
-    """Try Groq first; if unavailable or fails, fall back to local generator.
+    """Send a prompt to Groq Llama 3 and return text. Raises on failure."""
+    if not GROQ_API_KEY:
+        raise RuntimeError("Missing GROQ_API_KEY")
 
-    The local model uses GPT-2 via transformers and requires no API key,
-    providing unlimited offline responses. This keeps the bot alive even if
-    remote service limits are reached.
-    """
-    # attempt remote
-    if GROQ_API_KEY:
-        try:
-            url = "https://api.groq.com/v1/models/llama-3-952m/generate"
-            headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-            payload = {"input": prompt, "max_output_tokens": 500}
+    url = "https://api.groq.com/v1/models/llama-3-952m/generate"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    payload = {"input": prompt, "max_output_tokens": 500}
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload, timeout=30) as resp:
-                    text = await resp.text()
-                    if resp.status != 200:
-                        raise RuntimeError(f"Groq API error {resp.status}: {text}")
-                    data = await resp.json()
-                    out = "".join([o.get("content", "") for o in data.get("output", [])])
-                    return out.strip()
-        except Exception:
-            # log but continue to local fallback
-            logger.warning("Groq call failed, falling back to local model")
-    # local fallback
-    if _local_generator:
-        def sync_gen():
-            try:
-                res = _local_generator(prompt, max_length=200, num_return_sequences=1)
-                return res[0]["generated_text"]
-            except Exception:
-                return ""
-        loop = asyncio.get_event_loop()
-        text = await loop.run_in_executor(None, sync_gen)
-        if text:
-            return text
-    raise RuntimeError("No available AI model")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload, timeout=30) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                raise RuntimeError(f"Groq API error {resp.status}: {text}")
+            data = await resp.json()
+            out = "".join([o.get("content", "") for o in data.get("output", [])])
+            return out.strip()
 
 
 # ---------- SQLite helpers for conversation memory ----------
@@ -199,13 +179,31 @@ async def build_prompt(chat_id: int, user_text: str) -> str:
 
 async def generate_hinata_reply(chat_id: int, user_text: str, username: Optional[str] = None) -> str:
     store_message(chat_id, "user", user_text, username)
+    # first try Groq API
     try:
         prompt = await build_prompt(chat_id, user_text)
         reply = await query_groq(prompt)
-        if not reply:
+        if reply:
+            return reply
+        else:
             raise RuntimeError("empty reply")
-        return reply
-    except Exception:
+    except Exception as exc:
+        logger.warning("Groq failed: %s", exc)
+        # fallback to offline generator if available
+        if _generator is not None:
+            try:
+                prompt = HINATA_PROMPT_PREFIX + "User says: " + user_text + "\nHinata replies:"
+                out = _generator(prompt, max_length=120, do_sample=True, top_p=0.9, temperature=0.7)
+                text = out[0].get("generated_text", "")
+                # extract after last 'Hinata replies:' if present
+                parts = text.split("Hinata replies:")
+                reply = parts[-1].strip()
+                # sanity check: avoid long apologies or repeats
+                if reply and reply.lower().count("sorry") < 3:
+                    return reply
+            except Exception as e2:
+                logger.warning("Local generator failed: %s", e2)
+        # ultimate fallback
         return "e-eto... Naruto-kun, gomen... I'm having trouble thinking right now."
 
 

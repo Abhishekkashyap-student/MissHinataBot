@@ -42,11 +42,21 @@ history between restarts.
 
 ## Environment Variables Recap
 
-- `API_ID`, `API_HASH` (from my.telegram.org)
+- `API_ID`, `API_HASH` (from my.telegram.org; required by Pyrogram even for bots)
 - `BOT_TOKEN` (Telegram bot token)
 - `GROQ_API_KEY` (for Llama 3)
 
 ---
+
+## Offline fallback model
+
+If the Groq service is unavailable or you run out of quota, the bot automatically
+uses a small local language model (distilgpt2) that ships with the code. This
+model requires **no API key**, can run completely offline, and responds to
+an unlimited number of messages. Responses are simpler than Groq's but still
+maintain the Hinata persona. If the local model also misbehaves the bot falls
+back to a cute canned reply so it never crashes or behaves like a generic bot.
+
 
 
 ## GIF Support
