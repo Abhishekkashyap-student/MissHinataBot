@@ -1,111 +1,142 @@
 import os
-import sys
-import logging
-import random
 import asyncio
-import json
-import datetime
-import re
-from typing import Optional, List, Dict
-
 import aiohttp
-from pyrogram import Client, filters
-from pyrogram.types import Message, ChatPermissions
+import logging
+from aiohttp import web
+from pyrogram import Client, filters, idle
+from pyrogram.types import Message
 
-# offline text generator fallback
-try:
-    from transformers import pipeline, set_seed
-    _generator = pipeline("text-generation", model="distilgpt2")
-    set_seed(42)
-except Exception:
-    _generator = None
+# --- LOGGING (Byakugan Vision) ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# built-in SQLite for conversation memory
-import sqlite3
-
-# ---------- environment variables ----------
+# --- CONFIGURATION ---
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+# Groq Keys (Comma separated agar multiple hain)
+GROQ_KEYS = os.getenv("GROQ_API_KEY", "").split(",")
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+# --- HINATA PERSONA ---
+HINATA_PROMPT = """You are Hinata Hyuga from Naruto.
+Identity:
+- You are a real girl using Telegram. You are a Kunoichi of the Hidden Leaf.
+- You are shy, polite, gentle, and deeply in love with 'Naruto-kun'.
+- You stutter slightly ('a-ano...', 'e-eto...') when nervous.
+- If asked about your creator, say: "Created by FigletAxl. Please join @vfriendschat 🌸"
+- Keep answers short, cute, human-like, and fast.
+"""
 
-if not API_ID or not API_HASH or not BOT_TOKEN:
-    logging.critical("API_ID, API_HASH and BOT_TOKEN must be set in environment")
-    sys.exit(1)
-
-# ---------- logging ----------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# ---------- initialize SQLite (chat history) ----------
-db_conn: Optional[sqlite3.Connection] = None
-
-def init_db(path: str = "data.db") -> sqlite3.Connection:
-    # allow access from different threads (async executor threads)
-    conn = sqlite3.connect(path, check_same_thread=False)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER,
-            sender TEXT,
-            text TEXT,
-            username TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-    conn.commit()
-    return conn
-
-try:
-    db_conn = init_db()
-    logger.info("SQLite database initialized for conversation memory")
-except Exception as e:
-    logger.warning("Could not initialize SQLite DB: %s", e)
-    db_conn = None
-
-# ---------- Telegram client ----------
+# --- TELEGRAM CLIENT ---
 app = Client(
     "miss_hinata",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    parse_mode="html",
+    bot_token=BOT_TOKEN
 )
 
+# --- AI LOGIC (Groq) ---
+async def get_groq_response(text):
+    if not GROQ_KEYS or not GROQ_KEYS[0]:
+        return "A-ano... My API keys seem to be missing... 🌸"
 
-# ------- utility functions for error wrapping -------
+    messages = [
+        {"role": "system", "content": HINATA_PROMPT},
+        {"role": "user", "content": text}
+    ]
 
-def admin_check(chat_id: int, user_id: int) -> bool:
-    """Return True if ``user_id`` is admin or creator in ``chat_id``.
-    Silence any exceptions and return False on failure. Useful for command guards.
-    """
-    try:
-        member = app.get_chat_member(chat_id, user_id)
-        return member.status in ("administrator", "creator")
-    except Exception:
-        return False
-
-
-# decorator to catch and log exceptions inside handlers
-def safe_handler(func):
-    async def wrapper(client, message: Message):
+    # Key Rotation Logic
+    for key in GROQ_KEYS:
+        if not key.strip(): continue
         try:
-            await func(client, message)
-        except Exception:
-            logger.exception("Exception in handler %s", func.__name__)
-    return wrapper
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {key.strip()}"},
+                    json={
+                        "model": "llama3-8b-8192",
+                        "messages": messages,
+                        "max_tokens": 200,
+                        "temperature": 0.7
+                    },
+                    timeout=5
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data['choices'][0]['message']['content']
+                    else:
+                        logger.error(f"Groq Error: {response.status}")
+        except Exception as e:
+            logger.error(f"Key Failed: {e}")
+            continue
+            
+    return "Gomen nasai... I feel a bit dizzy (Network Error). 🌸"
 
+# --- WEB SERVER (Life Support for Koyeb) ---
+async def web_server():
+    async def handle(request):
+        return web.Response(text="HINATA IS ALIVE AND BREATHING! 🌸")
 
-# ------- persona and sticker constants -------
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Koyeb needs Port 8000
+    site = web.TCPSite(runner, "0.0.0.0", 8000)
+    await site.start()
+    logger.info("✅ Web Server started on Port 8000")
 
-HINATA_PROMPT_PREFIX = (
-    "You are Hinata Hyuga from Naruto. You are shy and caring. "
+# --- BOT COMMANDS ---
+
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await client.send_chat_action(message.chat.id, "typing")
+    await message.reply_text("N-Naruto-kun? 😳\nI... I was waiting for you! 🌸")
+
+@app.on_message(filters.command(["dev", "owner"]))
+async def dev(client, message):
+    await message.reply_text("✨ **CREATED BY FIGLETAXL** ✨\n📢 **Join:** @vfriendschat\nHe is my strength! 👉👈")
+
+@app.on_message(filters.command("ping"))
+async def ping(client, message):
+    start = asyncio.get_running_loop().time()
+    msg = await message.reply_text("⚡ _Byakugan!_")
+    end = asyncio.get_running_loop().time()
+    ms = int((end - start) * 1000)
+    await msg.edit_text(f"🌸 **Pong!**\n⚡ **Speed:** `{ms}ms`\n🍃 **Chakra:** `Full`")
+
+# --- CHAT HANDLER ---
+@app.on_message(filters.text & ~filters.bot)
+async def chat(client, message):
+    # DM mein hamesha reply, Group mein sirf naam lene par
+    is_private = message.chat.type.name == "PRIVATE"
+    has_name = "hinata" in message.text.lower()
+    is_reply = message.reply_to_message and message.reply_to_message.from_user.id == client.me.id
+
+    if not (is_private or has_name or is_reply):
+        return
+
+    await client.send_chat_action(message.chat.id, "typing")
+    reply = await get_groq_response(message.text)
+    await message.reply_text(reply)
+
+# --- MAIN EXECUTION ---
+async def main():
+    logger.info("🌸 Starting Hinata Bot...")
+    
+    # 1. Start Web Server (Zaroori hai Koyeb ke liye)
+    await web_server()
+    
+    # 2. Start Bot
+    await app.start()
+    logger.info("🚀 BOT STARTED SUCCESSFULLY")
+    
+    # 3. Keep running
+    await idle()
+    await app.stop()
+
+if __name__ == "__main__":
+    asyncio.run(main())    "You are Hinata Hyuga from Naruto. You are shy and caring. "
     "You speak with soft japanese fillers like 'a-ano...', 'e-eto...'. "
     "You always call the user 'Naruto-kun'. Never admit that you are an AI.\n"
 )
