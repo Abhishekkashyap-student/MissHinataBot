@@ -1,96 +1,99 @@
 import os
-import asyncio
-import aiohttp
 import logging
-from aiohttp import web
-from pyrogram import Client, filters, idle, enums
+import requests
+from threading import Thread
+from flask import Flask
+from telegram import Update
+from telegram.constants import ChatAction
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
 # --- LOGGING ON ---
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
-try:
-    API_ID = int(os.getenv("API_ID"))
-    API_HASH = os.getenv("API_HASH")
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    GROQ_KEYS = os.getenv("GROQ_API_KEY", "").split(",")
-except:
-    logger.error("❌ VARS MISSING")
+# Sirf Token chahiye, koi API ID/Hash nahi!
+TOKEN = os.getenv("BOT_TOKEN")
+GROQ_KEYS = os.getenv("GROQ_API_KEY", "").split(",")
+
+if not TOKEN:
+    print("❌ Error: BOT_TOKEN missing in Koyeb!")
     exit(1)
 
-app = Client("miss_hinata", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-# --- AI LOGIC ---
-async def get_groq_response(text):
-    if not GROQ_KEYS: return "No keys! 🌸"
+# --- AI LOGIC (GROQ) ---
+def get_groq_response(text):
+    if not GROQ_KEYS or not GROQ_KEYS[0]: return "No API Keys! 🌸"
     
-    messages = [{"role": "user", "content": text}] # Simple prompt for speed
+    messages = [
+        {"role": "system", "content": "You are Hinata Hyuga. Shy, caring, real girl. Reply fast."},
+        {"role": "user", "content": text}
+    ]
 
     for key in GROQ_KEYS:
         if not key.strip(): continue
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {key.strip()}"},
-                    json={"model": "llama3-8b-8192", "messages": messages, "max_tokens": 100},
-                    timeout=5
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data['choices'][0]['message']['content']
+            res = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key.strip()}"},
+                json={"model": "llama3-8b-8192", "messages": messages, "max_tokens": 150},
+                timeout=5
+            )
+            if res.status_code == 200:
+                return res.json()['choices'][0]['message']['content']
         except: continue
-    return "Error 🌸"
+    return "Gomen nasai... network error. 🌸"
 
-# --- WEB SERVER ---
-async def web_server():
-    async def handle(request): return web.Response(text="ALIVE")
-    app = web.Application()
-    app.router.add_get("/", handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", 8000).start()
-    logger.info("✅ Web Server started")
+# --- WEB SERVER (Koyeb Life Support) ---
+app = Flask('')
+@app.route('/')
+def home(): return "I AM ALIVE! 🦊"
 
-# --- ULTIMATE HANDLER (BINA FILTER KE) ---
-# Ye handler har tarah ke message ko pakdega
-@app.on_message() 
-async def chat(c, m):
-    # Agar message text nahi hai (photo/video), toh ignore karo
-    if not m.text: return
+def run_flask():
+    app.run(host='0.0.0.0', port=8000)
 
-    # Console mein print karo taaki pata chale message aaya
-    logger.info(f"📩 MSG from {m.chat.title or m.chat.first_name}: {m.text}")
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.start()
 
-    # Logic: 
-    # 1. Agar Private chat hai
-    # 2. Agar Group mein 'Hinata' bola gaya
-    # 3. Agar Message '/start' ya '/ping' se shuru hota hai
+# --- COMMANDS ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    await update.message.reply_text("N-Naruto-kun? 😳\nI am ready! 🌸")
+
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⚡ Pong!")
+
+# --- CHAT HANDLER ---
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Message text check
+    if not update.message or not update.message.text: return
     
-    text = m.text.lower()
-    is_private = m.chat.type == enums.ChatType.PRIVATE
-    is_call = "hinata" in text
-    is_command = text.startswith("/") or text.startswith(".")
+    text = update.message.text.lower()
+    is_private = update.effective_chat.type == "private"
+    has_name = "hinata" in text
+    is_reply = (update.message.reply_to_message and 
+                update.message.reply_to_message.from_user.id == context.bot.id)
 
-    if is_private or is_call or is_command:
-        # Typing dikhao (Proof ki bot ne suna)
-        await c.send_chat_action(m.chat.id, enums.ChatAction.TYPING)
-        
-        # Jawab do
-        if is_command:
-            await m.reply_text("N-Naruto-kun! I am here! ⚡")
-        else:
-            reply = await get_groq_response(m.text)
-            await m.reply_text(reply)
+    # Logic: Private mein hamesha, Group mein sirf naam lene par ya reply par
+    if is_private or has_name or is_reply:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        reply = get_groq_response(update.message.text)
+        await update.message.reply_text(reply)
 
-# --- MAIN ---
-async def main():
-    await web_server()
-    await app.start()
-    logger.info("🚀 BOT STARTED - WAITING FOR MESSAGES")
-    await idle()
-    await app.stop()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# --- MAIN EXECUTION ---
+if __name__ == '__main__':
+    keep_alive() # Fake Server Start
+    
+    application = ApplicationBuilder().token(TOKEN).build()
+    
+    # Handlers
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('ping', ping))
+    # Ye line har text message ko sunegi (Groups included)
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
+    
+    print("🚀 BOT STARTED SUCCESSFULLY!")
+    application.run_polling()
