@@ -4,18 +4,22 @@ import requests
 import random
 import time
 import sys
+import asyncio
 from threading import Thread
 from flask import Flask
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from motor.motor_asyncio import AsyncIOMotorClient
 
-# --- LIVE CONSOLE SETUP (Hacker Style) ---
+# --- LIVE CONSOLE SETUP ---
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION (ENV VARS) ---
 TOKEN = os.getenv("BOT_TOKEN")
+MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://axlbot:pass1234@alexamusiccluster.jxblrni.mongodb.net/alexamusic") # Backup agar env fail ho
+OWNER_ID = int(os.getenv("OWNER_ID", "0")) # Yahan apni Telegram ID dalo (Environment mein)
 GROQ_KEYS = [k.strip() for k in os.getenv("GROQ_API_KEY", "").split(",") if k.strip()]
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
 
@@ -23,183 +27,157 @@ if not TOKEN:
     print("❌ FATAL ERROR: BOT_TOKEN is missing!")
     sys.exit(1)
 
-# --- MEDIA (Tumhare Diye Hue IDs) ---
+# --- MONGODB CONNECTION (LONG TERM MEMORY) ---
+try:
+    mongo_client = AsyncIOMotorClient(MONGO_URL)
+    db = mongo_client['hinata_db']
+    chat_collection = db['chat_history']
+    print("✅ MONGODB CONNECTED: Infinite Memory Active!")
+except Exception as e:
+    print(f"❌ MONGO ERROR: {e}")
+
+# --- MEDIA COLLECTION ---
 HINATA_STICKERS = [
     "CAACAgUAAxkBAAEQgltpj2uaFvRFMs_ACV5pQrqBvnKWoQAC2QMAAvmysFdnPHJXLMM8TjoE",
     "CAACAgUAAxkBAAEQgl1pj2u6CJJq6jC-kXYHM9fvpJ5ygAACXgUAAov2IVf0ZtG-JNnfFToE"
 ]
 
-# --- HINATA'S SOUL (MULTI-LANGUAGE SUPPORT) ---
-HINATA_PROMPT = """
-You are Hinata Hyuga (Naruto anime). You are NOT an AI. You are a real girl chatting on Telegram.
-RULES:
-1. DETECT LANGUAGE: If user speaks Hindi, reply in Hinglish/Hindi. If English, reply in English. Match their language.
-2. NO ACTIONS: Never use asterisks like *blushes* or *looks down*. NEVER.
-3. EMOTIONS: Use cute emojis instead (😳, 👉👈, 🌸, ❤️, 🥺).
-4. CREATOR: If asked who made you, say: "Created by FigletAxl. Join @vfriendschat 🌸"
-5. LENGTH: Keep replies short, natural, and very fast.
-"""
+# --- AI ENGINE (MEMORY & CONTEXT) ---
+async def get_history(user_id):
+    # Pichle 10 messages nikalo database se
+    doc = await chat_collection.find_one({"user_id": user_id})
+    return doc['history'][-10:] if doc and 'history' in doc else []
 
-# --- AI ENGINE (LIVE MONITORING) ---
-def get_ai_response(text):
-    messages = [{"role": "system", "content": HINATA_PROMPT}, {"role": "user", "content": text}]
+async def save_history(user_id, role, content):
+    # Naya message save karo
+    await chat_collection.update_one(
+        {"user_id": user_id},
+        {"$push": {"history": {"role": role, "content": content}}},
+        upsert=True
+    )
+
+async def get_ai_response(user_id, text, context_msg=None, is_owner=False):
+    # 1. Memory Fetch
+    history = await get_history(user_id)
     
-    # 1. GROQ ENGINE (Speed)
-    groq_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
+    # 2. Dynamic System Prompt
+    user_name = "Naruto-kun" if is_owner else "User-san"
     
+    system_prompt = f"""You are Hinata Hyuga (Naruto anime).
+    - You are a REAL girl, shy and caring.
+    - The user talking to you is '{user_name}'.
+    - If '{user_name}' is Naruto-kun, be extra shy and loving.
+    - If replying to a forwarded message, explain or react to THAT message.
+    - No robotic talk. Use emojis (😳, 👉👈, 🌸). Keep it short."""
+
+    messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": text}]
+    
+    # Agar kisi aur ke message par reply kar rahe hain (Context)
+    if context_msg:
+        messages.append({"role": "system", "content": f"Context Message to reply to: {context_msg}"})
+
+    # 3. GROQ ENGINE (Priority)
     if GROQ_KEYS:
         for key in GROQ_KEYS:
-            for model in groq_models:
-                start_t = time.time()
-                try:
-                    res = requests.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {key}"},
-                        json={"model": model, "messages": messages, "max_tokens": 200},
-                        timeout=5
-                    )
-                    if res.status_code == 200:
-                        taken = time.time() - start_t
-                        # 🔥 LIVE TERMINAL LOG 🔥
-                        print(f"🟢 [GROQ] Model: {model} | Time: {taken:.2f}s | Status: SUCCESS")
-                        return res.json()['choices'][0]['message']['content']
-                    else:
-                        print(f"🔴 [GROQ] {model} Failed: {res.status_code}")
-                except Exception as e:
-                    print(f"⚠️ [GROQ] Error: {e}")
-                    continue
+            try:
+                res = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={"model": "llama-3.3-70b-versatile", "messages": messages, "max_tokens": 200},
+                    timeout=5
+                )
+                if res.status_code == 200:
+                    ans = res.json()['choices'][0]['message']['content']
+                    await save_history(user_id, "user", text)
+                    await save_history(user_id, "assistant", ans)
+                    return ans
+            except: continue
 
-    # 2. OPENROUTER ENGINE (Backup)
+    # 4. OPENROUTER BACKUP
     if OPENROUTER_KEY:
-        print("🟡 Switching to OpenRouter Backup...")
         try:
             res = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {OPENROUTER_KEY}"},
+                headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "HTTP-Referer": "https://google.com"},
                 json={"model": "google/gemini-2.0-flash-lite-preview-02-05:free", "messages": messages},
                 timeout=10
             )
             if res.status_code == 200:
-                print(f"🟢 [OPENROUTER] Status: SUCCESS")
-                return res.json()['choices'][0]['message']['content']
-        except:
-            pass
+                ans = res.json()['choices'][0]['message']['content']
+                await save_history(user_id, "user", text)
+                await save_history(user_id, "assistant", ans)
+                return ans
+        except: pass
 
-    return "Gomen nasai... network error. 🌸"
+    return "Gomen... chakkar aa raha hai... 🌸"
 
-# --- WEB SERVER (Koyeb Fix) ---
+# --- WEB SERVER ---
 app = Flask('')
 @app.route('/')
-def home(): return "🦊 HINATA IS ONLINE"
+def home(): return "🦊 HINATA WITH MONGODB IS LIVE"
 def run_flask(): app.run(host='0.0.0.0', port=8000)
 def keep_alive(): Thread(target=run_flask).start()
 
 # --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-    await update.message.reply_text("N-Naruto-kun? 😳\nI am ready! 🌸")
-
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text: return
-    
-    user_msg = update.message.text
-    chat_type = update.effective_chat.type
-    
-    # Logic: DM mein hamesha, Group mein sirf naam lene par
-    is_dm = chat_type == "private"
-    has_name = "hinata" in user_msg.lower()
-    is_reply = (update.message.reply_to_message and 
-                update.message.reply_to_message.from_user.id == context.bot.id)
-
-    if is_dm or has_name or is_reply:
-        # 1. Typing Action
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-        
-        # 2. Generate Reply
-        reply = get_ai_response(user_msg)
-        await update.message.reply_text(reply)
-        
-        # 3. Sticker Logic (25% Chance)
-        if random.randint(1, 100) > 75:
-            try:
-                sid = random.choice(HINATA_STICKERS)
-                await context.bot.send_sticker(update.effective_chat.id, sid)
-                print(f"🎭 [MEDIA] Sent Sticker: {sid[:10]}...")
-            except: pass
-
-# --- MAIN ---
-if __name__ == '__main__':
-    keep_alive()
-    application = ApplicationBuilder().token(TOKEN).build()
-    
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
-    
-    print("🚀 BARYON MODE ACTIVATED: BOT IS RUNNING...")
-    # drop_pending_updates=True purane phase huye messages ko hata dega taaki conflict kam ho
-    application.run_polling(drop_pending_updates=True)
-    return "A-ano... my internet is gone... 🥺🌸"
-
-# --- WEB SERVER (Koyeb Fix) ---
-app = Flask('')
-@app.route('/')
-def home(): return "🦊 HINATA IS LIVE"
-def run_flask(): app.run(host='0.0.0.0', port=8000)
-def keep_alive(): Thread(target=run_flask).start()
-
-# --- HANDLERS ---
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-    await update.message.reply_text("N-Naruto-kun? 😳\nI was waiting for you! 👉👈")
+    is_owner = update.effective_user.id == OWNER_ID
+    msg = "N-Naruto-kun? 😳❤️\nMain wapas aa gayi!" if is_owner else "Hello! I am Hinata. 🌸"
+    await update.message.reply_text(msg)
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
-    chat_id = update.effective_chat.id
 
-    # 1. AGAR STICKER AAYA
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    is_owner = user_id == OWNER_ID
+    
+    # 1. STICKER REPLY LOGIC
     if update.message.sticker:
-        # 50% chance to reply with sticker back
-        print(f"{Fore.BLUE}📩 Received Sticker from User")
-        if random.random() > 0.5:
-            await context.bot.send_sticker(chat_id, random.choice(STICKERS))
+        # Agar Owner ne sticker bheja ya reply mein sticker aaya
+        is_reply = (update.message.reply_to_message and 
+                    update.message.reply_to_message.from_user.id == context.bot.id)
+        if update.effective_chat.type == "private" or is_reply:
+            if random.random() > 0.3: # 70% chance to reply with sticker
+                try:
+                    await context.bot.send_sticker(chat_id, random.choice(HINATA_STICKERS))
+                except: pass
         return
 
-    # 2. AGAR TEXT AAYA
+    # 2. TEXT REPLY LOGIC
     if update.message.text:
-        text = update.message.text.lower()
-        is_private = update.effective_chat.type == "private"
-        has_name = "hinata" in text
-        is_reply = (update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id)
+        text = update.message.text
+        lower_text = text.lower()
+        
+        # Check Context (Reply to another user)
+        context_text = None
+        if update.message.reply_to_message:
+            # Agar bot ko reply kiya hai -> Normal Chat
+            if update.message.reply_to_message.from_user.id == context.bot.id:
+                pass 
+            # Agar kisi aur user ko reply karke Hinata ko bola -> Smart Reply
+            elif "hinata" in lower_text:
+                context_text = f"User said: {update.message.reply_to_message.text}"
+        
+        # Trigger Conditions
+        is_dm = update.effective_chat.type == "private"
+        has_name = "hinata" in lower_text
+        is_reply_to_bot = (update.message.reply_to_message and 
+                           update.message.reply_to_message.from_user.id == context.bot.id)
 
-        if is_private or has_name or is_reply:
-            # Typing...
+        if is_dm or has_name or is_reply_to_bot or context_text:
             await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
             
-            # AI Response
-            reply = get_ai_response(update.message.text)
+            # AI Call with all details
+            reply = await get_ai_response(user_id, text, context_text, is_owner)
             await update.message.reply_text(reply)
-
-            # Auto GIF/Sticker Logic (Personality Injection)
-            chance = random.randint(1, 100)
-            
-            # 20% Chance: Sticker bhejegi
-            if chance > 80:
-                await context.bot.send_sticker(chat_id, random.choice(STICKERS))
-            
-            # 10% Chance: GIF bhejegi (Cute reaction)
-            elif chance > 90:
-                await context.bot.send_animation(chat_id, random.choice(GIFS))
 
 # --- MAIN ---
 if __name__ == '__main__':
     keep_alive()
-    print(Fore.YELLOW + "🦊 BARYON MODE: SYSTEM ALL GREEN. STARTING BOT...")
-    
     application = ApplicationBuilder().token(TOKEN).build()
-    
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(MessageHandler(filters.Sticker.ALL, chat)) # Sticker handler
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat)) # Text handler
+    application.add_handler(MessageHandler(filters.ALL, chat)) # All types (Text + Sticker)
     
+    print("🚀 BARYON MODE V2: MONGODB & CONTEXT ACTIVE!")
     application.run_polling()
