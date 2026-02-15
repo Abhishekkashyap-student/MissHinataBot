@@ -12,7 +12,7 @@ Imagine the bot is a little robot that needs a few keys to start working. These 
 | `API_HASH` | Your Telegram application hash (from my.telegram.org) | `abcdef123456` |
 | `BOT_TOKEN` | The token you get when you create a bot with @BotFather | `1234:ABCD...` |
 | `GROQ_API_KEY` | A secret key used to ask the Groq AI model to chat | `sk-xxxx` |
-| `FIREBASE_JSON` or `FIREBASE_CRED_PATH` | (Optional) If you want the bot to remember chats, give it a Firebase key here. Either paste the whole JSON file in `FIREBASE_JSON` or put the filename in `FIREBASE_CRED_PATH`. | `{"type": "service_account", ...}` or `/app/creds.json` |
+
 
 > **Note:** Do not put these values in the code. They must stay secret, just like a password.
 
@@ -57,5 +57,7 @@ python main.py
 1. Think of `export` or `$env:` as giving a label to your robot before it starts. You only need to do it once per terminal session.
 2. If you are using a hosting service (like Koyeb or Heroku), they will usually have a place in the dashboard where you can paste these names and values instead of using `export`.
 3. Keep your keys private! Do not share them with friends or put them on GitHub.
+
+The bot will automatically create and use a file called `data.db` in the same folder for remembering chats. No extra setup is required.
 
 That's it! Once the variables are set, the bot will wake up and can chat with you as Miss Hinata.

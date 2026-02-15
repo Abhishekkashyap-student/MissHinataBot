@@ -12,12 +12,8 @@ import aiohttp
 from pyrogram import Client, filters
 from pyrogram.types import Message, ChatPermissions
 
-# Firebase admin SDK for conversation memory
-try:
-    import firebase_admin
-    from firebase_admin import credentials, firestore
-except ImportError:
-    firebase_admin = None
+# built-in SQLite for conversation memory
+import sqlite3
 
 # ---------- environment variables ----------
 API_ID = int(os.getenv("API_ID", "0"))
@@ -25,10 +21,6 @@ API_HASH = os.getenv("API_HASH", "")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-
-# firebase credentials can be provided as JSON string or path
-FIREBASE_JSON = os.getenv("FIREBASE_JSON", "")
-FIREBASE_CRED_PATH = os.getenv("FIREBASE_CRED_PATH", "")
 
 if not API_ID or not API_HASH or not BOT_TOKEN:
     logging.critical("API_ID, API_HASH and BOT_TOKEN must be set in environment")
@@ -41,24 +33,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------- initialize Firebase (chat history) ----------
-db = None
-if firebase_admin and (FIREBASE_JSON or FIREBASE_CRED_PATH):
-    try:
-        if FIREBASE_JSON:
-            cred_dict = json.loads(FIREBASE_JSON)
-            cred = credentials.Certificate(cred_dict)
-        else:
-            cred = credentials.Certificate(FIREBASE_CRED_PATH)
-        firebase_admin.initialize_app(cred)
-        db = firestore.client()
-        logger.info("Connected to Firestore for conversation memory")
-    except Exception as e:
-        logger.warning("Could not initialize Firebase: %s", e)
-        db = None
-else:
-    if not firebase_admin:
-        logger.warning("firebase_admin not installed; conversation memory disabled")
+# ---------- initialize SQLite (chat history) ----------
+db_conn: Optional[sqlite3.Connection] = None
+
+def init_db(path: str = "data.db") -> sqlite3.Connection:
+    # allow access from different threads (async executor threads)
+    conn = sqlite3.connect(path, check_same_thread=False)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            sender TEXT,
+            text TEXT,
+            username TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.commit()
+    return conn
+
+try:
+    db_conn = init_db()
+    logger.info("SQLite database initialized for conversation memory")
+except Exception as e:
+    logger.warning("Could not initialize SQLite DB: %s", e)
+    db_conn = None
 
 # ---------- Telegram client ----------
 app = Client(
@@ -127,27 +128,32 @@ async def query_groq(prompt: str) -> str:
             return out.strip()
 
 
-# ---------- Firebase helpers for conversation memory ----------
-def _get_chat_ref(chat_id: int):
-    return db.collection("chats").document(str(chat_id))
+# ---------- SQLite helpers for conversation memory ----------
 
-
-async def store_message(chat_id: int, entry: Dict):
-    if not db:
+def store_message(chat_id: int, sender: str, text: str, username: Optional[str] = None):
+    """Store a message synchronously."""
+    if not db_conn:
         return
-    def _sync():
-        ref = _get_chat_ref(chat_id).collection("messages")
-        entry.setdefault("timestamp", datetime.datetime.utcnow())
-        ref.add(entry)
-    await asyncio.get_event_loop().run_in_executor(None, _sync)
+    try:
+        db_conn.execute(
+            "INSERT INTO messages (chat_id, sender, text, username) VALUES (?, ?, ?, ?)",
+            (chat_id, sender, text, username),
+        )
+        db_conn.commit()
+    except Exception:
+        pass
 
 
 async def fetch_history(chat_id: int, limit: int = 20) -> List[Dict]:
-    if not db:
+    if not db_conn:
         return []
     def _sync():
-        ref = _get_chat_ref(chat_id).collection("messages").order_by("timestamp").limit(limit)
-        return [doc.to_dict() for doc in ref.stream()]
+        cur = db_conn.execute(
+            "SELECT sender, text FROM messages WHERE chat_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (chat_id, limit),
+        )
+        rows = cur.fetchall()
+        return [{"sender": r[0], "text": r[1]} for r in reversed(rows)]
     return await asyncio.get_event_loop().run_in_executor(None, _sync)
 
 
@@ -163,8 +169,8 @@ async def build_prompt(chat_id: int, user_text: str) -> str:
     return prompt
 
 
-async def generate_hinata_reply(chat_id: int, user_text: str) -> str:
-    await store_message(chat_id, {"sender": "user", "text": user_text})
+async def generate_hinata_reply(chat_id: int, user_text: str, username: Optional[str] = None) -> str:
+    store_message(chat_id, "user", user_text, username)
     try:
         prompt = await build_prompt(chat_id, user_text)
         reply = await query_groq(prompt)
@@ -206,10 +212,11 @@ async def simulate_typing(chat_id: int, text: str):
 
 
 async def maybe_send_gif(message: Message):
-    """Send a random pre‑selected gif when certain keywords appear.
+    """Fetch a random gif from Tenor's public API using a built-in key.
 
-    This avoids using an API key by hardcoding a small set of publicly
-    accessible gif URLs from Tenor/other sources.
+    No user API key is required; Tenor provides a free demo key that allows
+    simple searches.  We search for anime-related terms and pick a random
+    result to send.
     """
     text = (message.text or "").lower()
     triggers = ["naruto", "hinata", "kakashi", "wow", "nice", "good", "love"]
@@ -218,15 +225,34 @@ async def maybe_send_gif(message: Message):
     if random.random() > 0.3:
         return
 
-    GIFS = [
-        # example gifs; these should work without any API key
-        "https://media.tenor.com/images/5b6e2ebba1e1f9d5c3d7f3f1e2a69307/tenor.gif",  # hinata shy
-        "https://media.tenor.com/images/7166c6a1a5f3d8b2ef7411bdc6fd7c5e/tenor.gif",  # naruto laugh
-        "https://media.tenor.com/images/2ad6b1c6f3c7a9edf8b702bcb7e7c6e4/tenor.gif",  # kakashi cool
-    ]
-    gif_url = random.choice(GIFS)
+    # choose a search query based on keywords
+    if "kakashi" in text:
+        q = "kakashi naruto"
+    elif "hinata" in text or "naruto" in text:
+        q = "hinata naruto"
+    else:
+        q = "anime gif"
+
+    url = f"https://api.tenor.com/v1/search?q={q}&key=LIVDSRZULELA&limit=20"
     try:
-        await message.reply_animation(gif_url)
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(url) as resp:
+                data = await resp.json()
+                results = data.get("results", [])
+                if not results:
+                    return
+                choice = random.choice(results)
+                # new style uses media_formats
+                gif_url = None
+                if "media_formats" in choice:
+                    gif_url = choice["media_formats"].get("gif", {}).get("url")
+                else:
+                    # fallback older schema
+                    media = choice.get("media", [])
+                    if media and media[0].get("gif"):
+                        gif_url = media[0]["gif"].get("url")
+                if gif_url:
+                    await message.reply_animation(gif_url)
     except Exception:
         pass
 
@@ -400,7 +426,10 @@ async def chat_handler(client: Client, message: Message):
         return
 
     user_input = text if text else "<sticker>"
-    reply_text = await generate_hinata_reply(message.chat.id, user_input)
+    username = None
+    if message.from_user:
+        username = message.from_user.username or message.from_user.first_name
+    reply_text = await generate_hinata_reply(message.chat.id, user_input, username)
 
     for part in split_into_chunks(reply_text):
         await simulate_typing(message.chat.id, part)
@@ -408,7 +437,7 @@ async def chat_handler(client: Client, message: Message):
             sent = await message.reply_text(part)
         except Exception:
             continue
-        await store_message(message.chat.id, {"sender": "bot", "text": part})
+        store_message(message.chat.id, "bot", part)
         await asyncio.sleep(random.uniform(0.5, 1.5))
 
     await maybe_send_gif(message)

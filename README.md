@@ -30,15 +30,24 @@ For deployment on platforms like Koyeb, wrap the application in a Docker contain
 
 ---
 
-## Firebase Conversation Memory
+## Conversation Memory (SQLite)
 
-To retain past conversations and give the bot context, the project can use Firebase Firestore.
-1. Create a Firebase project at https://console.firebase.google.com/
-2. Add a service account (Settings ➜ Service accounts) and generate a JSON key.
-3. Provide that JSON either via the `FIREBASE_JSON` environment variable (entire file contents) or set `FIREBASE_CRED_PATH` to a path inside your container.
-4. The bot will automatically record every message it sees and replay the last ~20 entries to the AI model.
+The bot now stores chat history in a local SQLite database (`data.db` in the working directory).
+It records every message it processes along with the sender and username, and uses the last ~20 entries
+as context when querying the AI model. No external services or credentials are required – the database is
+created automatically when the bot starts.
 
-If `firebase-admin` is not installed or credentials are missing, the bot will simply operate without memory.
+You can inspect the database with tools like `sqlite3 data.db` or mount it in your container to preserve
+history between restarts.
+
+## Environment Variables Recap
+
+- `API_ID`, `API_HASH` (from my.telegram.org)
+- `BOT_TOKEN` (Telegram bot token)
+- `GROQ_API_KEY` (for Llama 3)
+
+---
+
 
 ## GIF Support
 
