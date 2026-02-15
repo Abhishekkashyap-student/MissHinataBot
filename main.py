@@ -23,12 +23,9 @@ app = Client("miss_hinata", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKE
 
 # --- AI LOGIC ---
 async def get_groq_response(text):
-    if not GROQ_KEYS: return "No chakra keys! 🌸"
+    if not GROQ_KEYS: return "No keys! 🌸"
     
-    messages = [
-        {"role": "system", "content": "You are Hinata Hyuga. You are NOT an AI. You are shy and caring. Reply fast and short."},
-        {"role": "user", "content": text}
-    ]
+    messages = [{"role": "user", "content": text}] # Simple prompt for speed
 
     for key in GROQ_KEYS:
         if not key.strip(): continue
@@ -37,14 +34,14 @@ async def get_groq_response(text):
                 async with session.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {key.strip()}"},
-                    json={"model": "llama3-8b-8192", "messages": messages, "max_tokens": 150},
+                    json={"model": "llama3-8b-8192", "messages": messages, "max_tokens": 100},
                     timeout=5
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
                         return data['choices'][0]['message']['content']
         except: continue
-    return "Gomen nasai... network issue. 🌸"
+    return "Error 🌸"
 
 # --- WEB SERVER ---
 async def web_server():
@@ -56,33 +53,42 @@ async def web_server():
     await web.TCPSite(runner, "0.0.0.0", 8000).start()
     logger.info("✅ Web Server started")
 
-# --- HANDLERS (NON-ADMIN FRIENDLY) ---
-
-@app.on_message(filters.command(["start", "ping"]))
-async def commands(c, m):
-    # Commands bina Admin ke bhi chalte hain
-    logger.info(f"📩 COMMAND: {m.text}")
-    await m.reply_text("N-Naruto-kun! I am here! ⚡")
-
-@app.on_message(filters.text & ~filters.bot)
+# --- ULTIMATE HANDLER (BINA FILTER KE) ---
+# Ye handler har tarah ke message ko pakdega
+@app.on_message() 
 async def chat(c, m):
-    # Logic: Agar 'Hinata' naam liya ya Reply kiya, toh jawab do
-    # Admin hone ki zaroorat nahi hai
-    text = m.text.lower()
-    is_reply = m.reply_to_message and m.reply_to_message.from_user.id == c.me.id
-    is_name_called = "hinata" in text
-    is_private = m.chat.type == enums.ChatType.PRIVATE
+    # Agar message text nahi hai (photo/video), toh ignore karo
+    if not m.text: return
 
-    if is_private or is_reply or is_name_called:
+    # Console mein print karo taaki pata chale message aaya
+    logger.info(f"📩 MSG from {m.chat.title or m.chat.first_name}: {m.text}")
+
+    # Logic: 
+    # 1. Agar Private chat hai
+    # 2. Agar Group mein 'Hinata' bola gaya
+    # 3. Agar Message '/start' ya '/ping' se shuru hota hai
+    
+    text = m.text.lower()
+    is_private = m.chat.type == enums.ChatType.PRIVATE
+    is_call = "hinata" in text
+    is_command = text.startswith("/") or text.startswith(".")
+
+    if is_private or is_call or is_command:
+        # Typing dikhao (Proof ki bot ne suna)
         await c.send_chat_action(m.chat.id, enums.ChatAction.TYPING)
-        reply = await get_groq_response(m.text)
-        await m.reply_text(reply)
+        
+        # Jawab do
+        if is_command:
+            await m.reply_text("N-Naruto-kun! I am here! ⚡")
+        else:
+            reply = await get_groq_response(m.text)
+            await m.reply_text(reply)
 
 # --- MAIN ---
 async def main():
     await web_server()
     await app.start()
-    logger.info("🚀 BOT STARTED")
+    logger.info("🚀 BOT STARTED - WAITING FOR MESSAGES")
     await idle()
     await app.stop()
 
