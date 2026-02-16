@@ -6,4 +6,4 @@ colorama
 motor
 dnspython
 psutil
-Pillow
+gTTS
