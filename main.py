@@ -7,25 +7,28 @@ import sys
 import psutil
 import asyncio
 import io
-import re
 from threading import Thread
 from flask import Flask
 from colorama import Fore, init
 from gtts import gTTS
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from motor.motor_asyncio import AsyncIOMotorClient
+import aiohttp
 
 # --- SETUP ---
 init(autoreset=True)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION (ENV VARS) ---
 TOKEN = os.getenv("BOT_TOKEN")
-# Tumhara Database Direct Laga Diya (Backup ke liye)
-MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://axlbot:pass1234@alexamusiccluster.jxblrni.mongodb.net/alexamusic")
+MONGO_URL = os.getenv("MONGO_URL")
+# Keys ko split kar rahe hain
 GROQ_KEYS = [k.strip() for k in os.getenv("GROQ_API_KEY", "").split(",") if k.strip()]
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
 ELEVENLABS_KEY = os.getenv("ELEVENLABS_API_KEY")
@@ -34,7 +37,7 @@ OWNER_ID = 8430369957
 START_TIME = time.time()
 
 if not TOKEN:
-    print(Fore.RED + "❌ FATAL: BOT_TOKEN missing!")
+    print(Fore.RED + "❌ FATAL ERROR: BOT_TOKEN missing!")
     sys.exit(1)
 
 # --- MONGODB CONNECTION ---
@@ -42,35 +45,33 @@ db_available = False
 chat_collection = None
 user_prefs = None 
 
-try:
-    # tlsAllowInvalidCertificates=True se SSL error fix hoga
-    mongo_client = AsyncIOMotorClient(MONGO_URL, tls=True, tlsAllowInvalidCertificates=True)
-    db = mongo_client['hinata_ultimate_db']
-    chat_collection = db['chat_history']
-    user_prefs = db['user_prefs']
-    db_available = True
-    print(Fore.GREEN + "✅ MONGODB CONNECTED: Infinite Memory Active!")
-except Exception as e:
-    print(Fore.RED + f"⚠️ MONGO ERROR: {e}")
+if MONGO_URL:
+    try:
+        mongo_client = AsyncIOMotorClient(MONGO_URL, tls=True, tlsAllowInvalidCertificates=True)
+        db = mongo_client['hinata_db']
+        chat_collection = db['chat_history']
+        user_prefs = db['user_prefs']
+        db_available = True
+        logger.info("✅ MONGODB CONNECTED!")
+    except Exception as e:
+        logger.error(f"⚠️ MONGO ERROR: {e}")
 
-# --- MEDIA LIBRARY ---
+# --- MEDIA COLLECTION ---
 HINATA_STICKERS = [
     "CAACAgUAAxkBAAEQgltpj2uaFvRFMs_ACV5pQrqBvnKWoQAC2QMAAvmysFdnPHJXLMM8TjoE",
-    "CAACAgUAAxkBAAEQgl1pj2u6CJJq6jC-kXYHM9fvpJ5ygAACXgUAAov2IVf0ZtG-JNnfFToE",
-    "CAACAgUAAxkBAAEQgmFpj2vUoH4s-9w582c0_q_1_0_0AAJbAwAC_bKwVx1o8z55_9_6HgQ"
+    "CAACAgUAAxkBAAEQgl1pj2u6CJJq6jC-kXYHM9fvpJ5ygAACXgUAAov2IVf0ZtG-JNnfFToE"
 ]
 HINATA_GIFS = [
-    "https://media.tenor.com/aYtqC651D5oAAAAC/hinata-hyuga-naruto.gif",
-    "https://media.tenor.com/M1K8y1jV134AAAAC/hinata-shy.gif",
-    "https://media.tenor.com/S_bW7X8j5yAAAAAC/hinata-naruto.gif"
+    "[https://media.tenor.com/aYtqC651D5oAAAAC/hinata-hyuga-naruto.gif](https://media.tenor.com/aYtqC651D5oAAAAC/hinata-hyuga-naruto.gif)",
+    "[https://media.tenor.com/S_bW7X8j5yAAAAAC/hinata-naruto.gif](https://media.tenor.com/S_bW7X8j5yAAAAAC/hinata-naruto.gif)"
 ]
 
-# --- HINATA'S SOUL (SYSTEM PROMPT) ---
+# --- HINATA'S SOUL ---
 HINATA_PROMPT = """You are Hinata Hyuga. NOT an AI.
 - Shy, gentle, calls user 'Naruto-kun'.
 - Use emojis (😳, 👉👈, 🌸).
 - Keep answers SHORT & CUTE.
-- If user asks for a picture/photo, reply with a description of the photo you are sending.
+- If asked for a pic, describe the pic you are sending.
 - Created by FigletAxl.
 """
 
@@ -89,6 +90,7 @@ async def set_mode(user_id, mode):
             await user_prefs.update_one({"user_id": user_id}, {"$set": {"mode": mode}}, upsert=True)
         except: pass
 
+# --- AI ENGINE ---
 async def get_text_response(user_id, text):
     # Memory Fetch
     history = []
@@ -100,29 +102,30 @@ async def get_text_response(user_id, text):
 
     messages = [{"role": "system", "content": HINATA_PROMPT}] + history + [{"role": "user", "content": text}]
 
-    # Groq Logic (Fastest)
+    # Groq Logic (Async)
     if GROQ_KEYS:
-        for key in GROQ_KEYS:
-            try:
-                res = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {key}"},
-                    json={"model": "llama-3.3-70b-versatile", "messages": messages, "max_tokens": 200},
-                    timeout=5
-                )
-                if res.status_code == 200:
-                    ans = res.json()['choices'][0]['message']['content']
-                    # Save Memory
-                    if db_available:
-                        await chat_collection.update_one(
-                            {"user_id": user_id},
-                            {"$push": {"history": {"role": "assistant", "content": ans}}},
-                            upsert=True
-                        )
-                    return ans
-            except: continue
+        async with aiohttp.ClientSession() as session:
+            for key in GROQ_KEYS:
+                try:
+                    async with session.post(
+                        "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)",
+                        headers={"Authorization": f"Bearer {key}"},
+                        json={"model": "llama-3.3-70b-versatile", "messages": messages, "max_tokens": 150},
+                        timeout=8
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            ans = data['choices'][0]['message']['content']
+                            if db_available:
+                                await chat_collection.update_one(
+                                    {"user_id": user_id},
+                                    {"$push": {"history": {"role": "assistant", "content": ans}}},
+                                    upsert=True
+                                )
+                            return ans
+                except: continue
             
-    return "A-ano... I feel dizzy... 🌸"
+    return "Gomen... network issue. 🌸"
 
 # --- MEDIA GENERATORS ---
 def backup_tts(text):
@@ -138,11 +141,13 @@ async def generate_voice(text):
     # 1. ElevenLabs (Real Voice)
     if ELEVENLABS_KEY:
         try:
-            url = f"https://api.elevenlabs.io/v1/text-to-speech/{HINATA_VOICE_ID}"
+            url = f"[https://api.elevenlabs.io/v1/text-to-speech/](https://api.elevenlabs.io/v1/text-to-speech/){HINATA_VOICE_ID}"
             headers = {"xi-api-key": ELEVENLABS_KEY, "Content-Type": "application/json"}
             data = {"text": text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
-            res = requests.post(url, json=data, headers=headers, timeout=5)
-            if res.status_code == 200: return res.content
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, headers=headers, timeout=5) as res:
+                    if res.status == 200:
+                        return await res.read()
         except: pass
 
     # 2. Google Backup
@@ -151,42 +156,27 @@ async def generate_voice(text):
 async def generate_image(prompt):
     try:
         safe_prompt = f"anime style hinata hyuga {prompt}, cute, high quality, soft lighting, 4k"
-        url = f"https://image.pollinations.ai/prompt/{safe_prompt}"
+        url = f"[https://image.pollinations.ai/prompt/](https://image.pollinations.ai/prompt/){safe_prompt}"
         return url
     except: return None
 
 # --- WEB SERVER (LIFE SUPPORT) ---
-web_app = Flask('')
-@web_app.route('/')
-def home(): return "🦊 HINATA ONLINE"
+app = Flask('')
+@app.route('/')
+def home(): return "🦊 HINATA LIVE"
+def run_flask(): app.run(host='0.0.0.0', port=8000)
+def keep_alive(): Thread(target=run_flask).start()
 
-def run_flask():
-    web_app.run(host='0.0.0.0', port=8000)
-
-def keep_alive():
-    t = Thread(target=run_flask)
-    t.daemon = True
-    t.start()
-
-# --- BOT HANDLERS ---
+# --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-    await asyncio.sleep(1)
-    
     dev_link = f"<a href='tg://user?id={OWNER_ID}'>FigletAxl</a>"
-    msg = (
-        f"N-Naruto-kun? 😳\n\n"
-        f"I... I am ready for the mission!\n"
-        f"✨ **Created by:** {dev_link}-kun\n"
-        f"📢 **Clan:** @vfriendschat"
-    )
+    msg = f"N-Naruto-kun? 😳\nI am ready! Created by {dev_link}-kun. 🌸"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uptime = int(time.time() - START_TIME)
-    cpu = psutil.cpu_percent()
-    msg = f"⚡ **Byakugan Active!**\n⏱️ Uptime: `{uptime}s`\n💻 CPU: `{cpu}%`\n🍃 Memory: `{'Connected' if db_available else 'Offline'}`"
-    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(f"⚡ **Pong!**\nUptime: `{uptime}s`", parse_mode="Markdown")
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
@@ -194,7 +184,6 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
-    # Trigger Check
     is_dm = update.effective_chat.type == "private"
     has_name = "hinata" in text.lower()
     is_reply = (update.message.reply_to_message and 
@@ -207,23 +196,23 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1. IMAGE GEN
     if "pic" in lower_text or "photo" in lower_text or "image" in lower_text:
         await context.bot.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
-        prompt = text.replace("hinata", "").replace("bhejo", "").replace("pic", "").strip()
+        prompt = text.replace("hinata", "").replace("bhejo", "").replace("pic", "").replace("photo", "").strip()
         img_url = await generate_image(prompt or "smiling")
         if img_url:
             await update.message.reply_photo(img_url, caption="Ye lijiye... 👉👈")
         return
 
-    # 2. VOICE MODE
+    # 2. MODE SWITCHING
     if "voice chat" in lower_text:
         await set_mode(user_id, "voice")
-        await update.message.reply_text("Theek hai! Ab main bolungi. 🎤🌸")
+        await update.message.reply_text("Theek hai! Ab main bol kar jawab dungi. 🎤🌸")
         return
     if "text chat" in lower_text:
         await set_mode(user_id, "text")
-        await update.message.reply_text("Wapas text par aa gayi! 📝")
+        await update.message.reply_text("Okay! Wapas text par aa gayi. 📝🌸")
         return
 
-    # 3. RESPONSE LOGIC
+    # 3. REPLY LOGIC
     mode = await get_mode(user_id)
     
     if mode == "voice":
@@ -239,39 +228,35 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
         ai_text = await get_text_response(user_id, text)
         
-        # Agar text bada hai ya Hinata excited hai, toh kabhi kabhi 2 parts mein bhejegi
+        # Agar text bada hai toh split karo (Realism)
         if len(ai_text) > 100 and random.random() > 0.7:
             parts = ai_text.split(". ", 1)
             if len(parts) > 1:
                 await update.message.reply_text(parts[0] + ".")
                 await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
-                await asyncio.sleep(1.5) # Human pause
+                await asyncio.sleep(1.5)
                 await update.message.reply_text(parts[1])
             else:
                 await update.message.reply_text(ai_text)
         else:
             await update.message.reply_text(ai_text)
 
-        # 4. RANDOM MEDIA (GIF/STICKER)
+        # 4. RANDOM STICKER/GIF
         if random.random() > 0.85:
             try:
-                await asyncio.sleep(1)
                 if random.choice([True, False]):
                     await context.bot.send_sticker(chat_id, random.choice(HINATA_STICKERS))
                 else:
                     await context.bot.send_animation(chat_id, random.choice(HINATA_GIFS))
             except: pass
 
-# --- MAIN EXECUTION ---
+# --- MAIN ---
 if __name__ == '__main__':
-    keep_alive() # Fake Server
-    
-    # PTB V20+ Setup
-    application = Application.builder().token(TOKEN).build()
-    
+    keep_alive()
+    application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('ping', ping))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
+    application.add_handler(MessageHandler(filters.ALL, chat)) # Images/Stickers bhi handle karega
     
-    print(Fore.YELLOW + "🚀 HINATA ULTIMATE IS LIVE!")
+    print(Fore.YELLOW + "🚀 HINATA FULL POWER IS LIVE!")
     application.run_polling()
