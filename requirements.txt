@@ -8,5 +8,3 @@ dnspython
 psutil
 gTTS
 Pillow
-g4f
-nest_asyncio
