@@ -17,12 +17,6 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# G4F Backup
-import g4f
-from g4f.client import Client as G4FClient
-import nest_asyncio
-nest_asyncio.apply()
-
 # --- SETUP ---
 init(autoreset=True)
 logging.basicConfig(
@@ -42,10 +36,10 @@ OWNER_ID = 8430369957
 START_TIME = time.time()
 
 if not TOKEN:
-    logger.critical("❌ FATAL ERROR: BOT_TOKEN missing!")
+    print(Fore.RED + "❌ FATAL ERROR: BOT_TOKEN missing!")
     sys.exit(1)
 
-# --- MONGODB ---
+# --- MONGODB CONNECTION ---
 db_available = False
 chat_collection = None
 user_prefs = None 
@@ -61,24 +55,48 @@ if MONGO_URL:
     except Exception as e:
         logger.error(f"⚠️ MONGO ERROR: {e}")
 
-# --- MEDIA ---
+# --- MEDIA COLLECTION (UPDATED WITH YOUR STICKERS) ---
 HINATA_STICKERS = [
     "CAACAgUAAxkBAAEQgltpj2uaFvRFMs_ACV5pQrqBvnKWoQAC2QMAAvmysFdnPHJXLMM8TjoE",
-    "CAACAgUAAxkBAAEQgl1pj2u6CJJq6jC-kXYHM9fvpJ5ygAACXgUAAov2IVf0ZtG-JNnfFToE"
+    "CAACAgUAAxkBAAEQgl1pj2u6CJJq6jC-kXYHM9fvpJ5ygAACXgUAAov2IVf0ZtG-JNnfFToE",
+    "CAACAgUAAxkBAAEQhwtpkpsDnQvGqN6EZi7DSsL6yCGpGgACggYAArXC-FerIE7xabONtjoE",
+    "CAACAgUAAxkBAAEQhwxpkpsD0m9Kv1hyFUkLS2dikmwNpAACRQQAAmi1iFbiIy-5jn88MjoE",
+    "CAACAgUAAxkBAAEQhxNpkqYpurdkhxj-_qpbe8Jcg2ZMEQACyAYAAslrgVZ5SXsc4VrZxDoE",
+    "CAACAgUAAxkBAAEQhxVpkqYzdKGgp8oM-aF20m8FUHZXxwACcwQAAuWQiFaLohAqKc3NWzoE",
+    "CAACAgUAAxkBAAEQhxdpkqY2P0m4TxE6vlCPz49O_EMSFQACoQQAArgQiVYbOVm8HBe_ZjoE",
+    "CAACAgUAAxkBAAEQhxlpkqY5ttqQ2pAHi8awaM4dwm834AACqgYAAtl4gFbh5StpvCT99joE",
+    "CAACAgUAAxkBAAEQhxtpkqY9rNBusftFqCyIFJSUP9ZOlwACBwUAAha1iVZ33XYX5lux5zoE",
+    "CAACAgUAAxkBAAEQhx1pkqY_9hTlZOKWxL6NTExfaqxvhwACoAYAAlIogFY3yR9qoXw2wToE",
+    "CAACAgUAAxkBAAEQhx9pkqZCDRgR6BRFiCJ3BB1n2yKO2QACBQcAAiK-iVbXjCbGXxmXFzoE",
+    "CAACAgUAAxkBAAEQhyFpkqZLyQkMw490R-Hy5JHYkggsYgACTQUAAkHoIFeJ7BvsZutAzzoE",
+    "CAACAgUAAxkBAAEQhyNpkqZPXTcAAW8D3PV_HF34VT_cyvAAAiwEAAJHGCFXq9n7uE5iQds6BA",
+    "CAACAgUAAxkBAAEQhyVpkqZRlvzfJAbQWrCYGT47oGvVDAACowYAAhcwIVd0rNn1hRRqMDoE",
+    "CAACAgUAAxkBAAEQhydpkqZXZMMol_ae625g_MUGzTZ31AACQAQAAtViIFfnUyGLneYmiDoE",
+    "CAACAgUAAxkBAAEQhylpkqZZ_WpEbfSv7qLlEvSIofbtwgACrwQAAj_FIVdkHc6hM5p0RzoE",
+    "CAACAgUAAxkBAAEQhytpkqZdNindw9pYTUhIm_6_1yUcZwACTgcAAv6uIFddTzKe7JJmyzoE",
+    "CAACAgUAAxkBAAEQhy1pkqZgN-f2NCJp1N1usbCW0APQXAACjwQAAjCbIFeVamPW1YZCXzoE",
+    "CAACAgUAAxkBAAEQhy9pkqZsc44h_6rVw-m7MAwjaduQPgACnQQAAotYqFcXUBpL70t0pzoE",
+    "CAACAgUAAxkBAAEQhzFpkqZulSoEOR5yYeKC5R0CdbiCXAACvgYAApKTqVduYLPrFu-dIjoE",
+    "CAACAgUAAxkBAAEQhzNpkqZxol9n-GPmU277nZw04m_WFAACkwMAApXHqVfqro6Xrj4MhDoE",
+    "CAACAgUAAxkBAAEQhzVpkqZ1Q5GKuJBx28DkZ4D5wArGXAACoQQAAsv_qVeFX7x-j44JsToE",
+    "CAACAgUAAxkBAAEQhzdpkqZ44vXASwznUDt77qMkIDMdQQAC4ggAAnpeqFfwHHzbDNOIZzo"
 ]
+
 HINATA_GIFS = [
-    "https://media.tenor.com/aYtqC651D5oAAAAC/hinata-hyuga-naruto.gif",
-    "https://media.tenor.com/S_bW7X8j5yAAAAAC/hinata-naruto.gif"
+    "[https://media.tenor.com/aYtqC651D5oAAAAC/hinata-hyuga-naruto.gif](https://media.tenor.com/aYtqC651D5oAAAAC/hinata-hyuga-naruto.gif)",
+    "[https://media.tenor.com/S_bW7X8j5yAAAAAC/hinata-naruto.gif](https://media.tenor.com/S_bW7X8j5yAAAAAC/hinata-naruto.gif)",
+    "[https://media.tenor.com/M1K8y1jV134AAAAC/hinata-shy.gif](https://media.tenor.com/M1K8y1jV134AAAAC/hinata-shy.gif)"
 ]
 
 HINATA_PROMPT = """You are Hinata Hyuga. NOT an AI.
 - Shy, gentle, calls user 'Naruto-kun'.
 - Use emojis (😳, 👉👈, 🌸).
 - Keep answers SHORT & CUTE.
+- If asked for a pic, describe the pic you are sending.
 - Created by FigletAxl.
 """
 
-# --- UTILS ---
+# --- HELPER FUNCTIONS ---
 async def get_mode(user_id):
     if db_available:
         try:
@@ -93,7 +111,7 @@ async def set_mode(user_id, mode):
             await user_prefs.update_one({"user_id": user_id}, {"$set": {"mode": mode}}, upsert=True)
         except: pass
 
-# --- AI ENGINE (TRIPLE LAYER PROTECTION) ---
+# --- AI ENGINE ---
 async def get_text_response(user_id, text):
     history = []
     if db_available:
@@ -104,13 +122,13 @@ async def get_text_response(user_id, text):
 
     messages = [{"role": "system", "content": HINATA_PROMPT}] + history + [{"role": "user", "content": text}]
 
-    # 1. GROQ ENGINE (Fastest)
+    # Groq Logic (Priority)
     if GROQ_KEYS:
         async with aiohttp.ClientSession() as session:
             for key in GROQ_KEYS:
                 try:
                     async with session.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
+                        "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)",
                         headers={"Authorization": f"Bearer {key}"},
                         json={"model": "llama-3.3-70b-versatile", "messages": messages, "max_tokens": 150},
                         timeout=8
@@ -118,45 +136,16 @@ async def get_text_response(user_id, text):
                         if response.status == 200:
                             data = await response.json()
                             ans = data['choices'][0]['message']['content']
-                            if db_available: await save_history(user_id, text, ans)
+                            if db_available:
+                                await chat_collection.update_one(
+                                    {"user_id": user_id},
+                                    {"$push": {"history": {"role": "assistant", "content": ans}}},
+                                    upsert=True
+                                )
                             return ans
                 except: continue
     
-    # 2. OPENROUTER (Backup)
-    if OPENROUTER_KEY:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}"},
-                    json={"model": "google/gemini-2.0-flash-lite-preview-02-05:free", "messages": messages},
-                    timeout=10
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        ans = data['choices'][0]['message']['content']
-                        if db_available: await save_history(user_id, text, ans)
-                        return ans
-        except: pass
-
-    # 3. G4F (Ultimate Free Backup)
-    try:
-        client = G4FClient()
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=messages
-        )
-        return response.choices[0].message.content
-    except: pass
-            
-    return "Gomen... network issue. 🌸"
-
-async def save_history(user_id, user_text, bot_text):
-    await chat_collection.update_one(
-        {"user_id": user_id},
-        {"$push": {"history": {"role": "assistant", "content": bot_text}}},
-        upsert=True
-    )
+    return "A-ano... I feel dizzy... (Network Error) 🌸"
 
 # --- MEDIA GENERATORS ---
 def backup_tts(text):
@@ -169,23 +158,27 @@ def backup_tts(text):
     except: return None
 
 async def generate_voice(text):
-    # ElevenLabs
+    # 1. ElevenLabs (Real Voice)
     if ELEVENLABS_KEY:
         try:
-            url = f"https://api.elevenlabs.io/v1/text-to-speech/{HINATA_VOICE_ID}"
+            url = f"[https://api.elevenlabs.io/v1/text-to-speech/](https://api.elevenlabs.io/v1/text-to-speech/){HINATA_VOICE_ID}"
             headers = {"xi-api-key": ELEVENLABS_KEY, "Content-Type": "application/json"}
             data = {"text": text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, headers=headers, timeout=5) as res:
-                    if res.status == 200: return await res.read()
+                    if res.status == 200:
+                        return await res.read()
         except: pass
     
-    # Google Backup
+    # 2. Google Backup
     return await asyncio.get_running_loop().run_in_executor(None, backup_tts, text)
 
 async def generate_image(prompt):
     try:
-        url = f"https://image.pollinations.ai/prompt/anime style hinata hyuga {prompt}, cute, 4k"
+        # Random seed to ensure new image every time
+        seed = random.randint(1, 99999)
+        safe_prompt = f"anime style hinata hyuga {prompt}, cute, high quality, soft lighting, 4k, seed-{seed}"
+        url = f"[https://image.pollinations.ai/prompt/](https://image.pollinations.ai/prompt/){safe_prompt}"
         return url
     except: return None
 
@@ -209,7 +202,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
-    # Check Logic
+    # Trigger Logic
     is_dm = update.effective_chat.type == "private"
     has_name = "hinata" in text.lower()
     is_reply = (update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id)
@@ -218,15 +211,19 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lower_text = text.lower()
     
-    # Image Gen
-    if any(x in lower_text for x in ["pic", "photo", "image"]):
+    # 1. IMAGE GEN
+    if any(x in lower_text for x in ["pic", "photo", "image", "bhejo"]):
         await context.bot.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
-        prompt = text.replace("hinata", "").replace("pic", "").strip()
+        prompt = text.replace("hinata", "").replace("bhejo", "").replace("pic", "").replace("photo", "").strip()
         img_url = await generate_image(prompt or "smiling")
-        await update.message.reply_photo(img_url, caption="Ye lijiye... 👉👈")
+        
+        if img_url:
+            await update.message.reply_photo(img_url, caption="Ye lijiye... 👉👈")
+        else:
+            await update.message.reply_text("Gomen... camera nahi chal raha. 🌸")
         return
 
-    # Voice Mode Switch
+    # 2. MODE SWITCHING
     if "voice chat" in lower_text:
         await set_mode(user_id, "voice")
         await update.message.reply_text("Theek hai! Ab main bol kar jawab dungi. 🎤🌸")
@@ -236,27 +233,52 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Wapas text par aa gayi! 📝")
         return
 
+    # 3. REPLY GENERATION
     mode = await get_mode(user_id)
-    await context.bot.send_chat_action(chat_id, ChatAction.RECORD_VOICE if mode == "voice" else ChatAction.TYPING)
     
-    ai_text = await get_text_response(user_id, text)
-    
+    # Voice Mode
     if mode == "voice":
+        await context.bot.send_chat_action(chat_id, ChatAction.RECORD_VOICE)
+        ai_text = await get_text_response(user_id, text)
         audio = await generate_voice(ai_text)
-        if isinstance(audio, io.BytesIO): await update.message.reply_voice(audio)
-        else: await update.message.reply_voice(io.BytesIO(audio))
+        
+        if audio:
+            if isinstance(audio, io.BytesIO): await update.message.reply_voice(audio, caption="🌸")
+            else: await update.message.reply_voice(io.BytesIO(audio), caption="🌸")
+        else:
+            await update.message.reply_text(f"{ai_text}\n(Voice error, text bheja hai) 🌸")
+    
+    # Text Mode (With Double Texting)
     else:
-        await update.message.reply_text(ai_text)
-        if random.random() > 0.85:
-            try: await context.bot.send_sticker(chat_id, random.choice(HINATA_STICKERS))
+        await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+        ai_text = await get_text_response(user_id, text)
+        
+        # Double Texting Logic (Realism)
+        if len(ai_text) > 80 and random.random() > 0.6:
+            parts = ai_text.split(". ", 1)
+            await update.message.reply_text(parts[0] + ".")
+            await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+            await asyncio.sleep(1.5)
+            await update.message.reply_text(parts[1] if len(parts) > 1 else "👉👈")
+        else:
+            await update.message.reply_text(ai_text)
+        
+        # Random Sticker Reply (30% Chance)
+        if random.random() > 0.70:
+            try:
+                await asyncio.sleep(1)
+                if random.choice([True, False]):
+                    await context.bot.send_sticker(chat_id, random.choice(HINATA_STICKERS))
+                else:
+                    await context.bot.send_animation(chat_id, random.choice(HINATA_GIFS))
             except: pass
 
 # --- MAIN ---
 if __name__ == '__main__':
     keep_alive()
-    # allowed_updates=Update.ALL_TYPES zaroori hai group messages ke liye
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(MessageHandler(filters.ALL, chat))
+    application.add_handler(MessageHandler(filters.ALL, chat)) # Images/Stickers bhi handle karega
+    
     print(Fore.YELLOW + "🚀 HINATA ULTIMATE STARTED!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling()
