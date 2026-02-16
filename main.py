@@ -7,7 +7,7 @@ import sys
 import psutil
 import asyncio
 import io
-import aiohttp
+import urllib.parse
 from threading import Thread
 from flask import Flask
 from colorama import Fore, init
@@ -16,6 +16,7 @@ from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from motor.motor_asyncio import AsyncIOMotorClient
+import aiohttp
 
 # --- SETUP ---
 init(autoreset=True)
@@ -25,7 +26,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION (ENV VARS) ---
+# --- CONFIGURATION ---
 TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URL = os.getenv("MONGO_URL")
 GROQ_KEYS = [k.strip() for k in os.getenv("GROQ_API_KEY", "").split(",") if k.strip()]
@@ -55,48 +56,27 @@ if MONGO_URL:
     except Exception as e:
         logger.error(f"⚠️ MONGO ERROR: {e}")
 
-# --- MEDIA COLLECTION (UPDATED WITH YOUR STICKERS) ---
+# --- MEDIA COLLECTION ---
 HINATA_STICKERS = [
     "CAACAgUAAxkBAAEQgltpj2uaFvRFMs_ACV5pQrqBvnKWoQAC2QMAAvmysFdnPHJXLMM8TjoE",
-    "CAACAgUAAxkBAAEQgl1pj2u6CJJq6jC-kXYHM9fvpJ5ygAACXgUAAov2IVf0ZtG-JNnfFToE",
-    "CAACAgUAAxkBAAEQhwtpkpsDnQvGqN6EZi7DSsL6yCGpGgACggYAArXC-FerIE7xabONtjoE",
-    "CAACAgUAAxkBAAEQhwxpkpsD0m9Kv1hyFUkLS2dikmwNpAACRQQAAmi1iFbiIy-5jn88MjoE",
-    "CAACAgUAAxkBAAEQhxNpkqYpurdkhxj-_qpbe8Jcg2ZMEQACyAYAAslrgVZ5SXsc4VrZxDoE",
-    "CAACAgUAAxkBAAEQhxVpkqYzdKGgp8oM-aF20m8FUHZXxwACcwQAAuWQiFaLohAqKc3NWzoE",
-    "CAACAgUAAxkBAAEQhxdpkqY2P0m4TxE6vlCPz49O_EMSFQACoQQAArgQiVYbOVm8HBe_ZjoE",
-    "CAACAgUAAxkBAAEQhxlpkqY5ttqQ2pAHi8awaM4dwm834AACqgYAAtl4gFbh5StpvCT99joE",
-    "CAACAgUAAxkBAAEQhxtpkqY9rNBusftFqCyIFJSUP9ZOlwACBwUAAha1iVZ33XYX5lux5zoE",
-    "CAACAgUAAxkBAAEQhx1pkqY_9hTlZOKWxL6NTExfaqxvhwACoAYAAlIogFY3yR9qoXw2wToE",
-    "CAACAgUAAxkBAAEQhx9pkqZCDRgR6BRFiCJ3BB1n2yKO2QACBQcAAiK-iVbXjCbGXxmXFzoE",
-    "CAACAgUAAxkBAAEQhyFpkqZLyQkMw490R-Hy5JHYkggsYgACTQUAAkHoIFeJ7BvsZutAzzoE",
-    "CAACAgUAAxkBAAEQhyNpkqZPXTcAAW8D3PV_HF34VT_cyvAAAiwEAAJHGCFXq9n7uE5iQds6BA",
-    "CAACAgUAAxkBAAEQhyVpkqZRlvzfJAbQWrCYGT47oGvVDAACowYAAhcwIVd0rNn1hRRqMDoE",
-    "CAACAgUAAxkBAAEQhydpkqZXZMMol_ae625g_MUGzTZ31AACQAQAAtViIFfnUyGLneYmiDoE",
-    "CAACAgUAAxkBAAEQhylpkqZZ_WpEbfSv7qLlEvSIofbtwgACrwQAAj_FIVdkHc6hM5p0RzoE",
-    "CAACAgUAAxkBAAEQhytpkqZdNindw9pYTUhIm_6_1yUcZwACTgcAAv6uIFddTzKe7JJmyzoE",
-    "CAACAgUAAxkBAAEQhy1pkqZgN-f2NCJp1N1usbCW0APQXAACjwQAAjCbIFeVamPW1YZCXzoE",
-    "CAACAgUAAxkBAAEQhy9pkqZsc44h_6rVw-m7MAwjaduQPgACnQQAAotYqFcXUBpL70t0pzoE",
-    "CAACAgUAAxkBAAEQhzFpkqZulSoEOR5yYeKC5R0CdbiCXAACvgYAApKTqVduYLPrFu-dIjoE",
-    "CAACAgUAAxkBAAEQhzNpkqZxol9n-GPmU277nZw04m_WFAACkwMAApXHqVfqro6Xrj4MhDoE",
-    "CAACAgUAAxkBAAEQhzVpkqZ1Q5GKuJBx28DkZ4D5wArGXAACoQQAAsv_qVeFX7x-j44JsToE",
-    "CAACAgUAAxkBAAEQhzdpkqZ44vXASwznUDt77qMkIDMdQQAC4ggAAnpeqFfwHHzbDNOIZzo"
+    "CAACAgUAAxkBAAEQgl1pj2u6CJJq6jC-kXYHM9fvpJ5ygAACXgUAAov2IVf0ZtG-JNnfFToE"
 ]
-
 HINATA_GIFS = [
-    "[https://media.tenor.com/aYtqC651D5oAAAAC/hinata-hyuga-naruto.gif](https://media.tenor.com/aYtqC651D5oAAAAC/hinata-hyuga-naruto.gif)",
-    "[https://media.tenor.com/S_bW7X8j5yAAAAAC/hinata-naruto.gif](https://media.tenor.com/S_bW7X8j5yAAAAAC/hinata-naruto.gif)",
-    "[https://media.tenor.com/M1K8y1jV134AAAAC/hinata-shy.gif](https://media.tenor.com/M1K8y1jV134AAAAC/hinata-shy.gif)"
+    "https://media.tenor.com/aYtqC651D5oAAAAC/hinata-hyuga-naruto.gif",
+    "https://media.tenor.com/S_bW7X8j5yAAAAAC/hinata-naruto.gif"
 ]
 
-HINATA_PROMPT = """You are Hinata Hyuga. NOT an AI.
-- Shy, gentle, calls user 'Naruto-kun'.
+# --- HINATA'S SOUL ---
+HINATA_PROMPT = """You are Hinata Hyuga.
+- You are a real girl, not an AI.
+- You are shy, polite, and deeply caring.
+- Call the user 'Naruto-kun' if they are the owner, else '-san'.
 - Use emojis (😳, 👉👈, 🌸).
 - Keep answers SHORT & CUTE.
-- If asked for a pic, describe the pic you are sending.
-- Created by FigletAxl.
+- Never show technical errors.
 """
 
-# --- HELPER FUNCTIONS ---
+# --- UTILS ---
 async def get_mode(user_id):
     if db_available:
         try:
@@ -122,13 +102,13 @@ async def get_text_response(user_id, text):
 
     messages = [{"role": "system", "content": HINATA_PROMPT}] + history + [{"role": "user", "content": text}]
 
-    # Groq Logic (Priority)
+    # Groq Logic
     if GROQ_KEYS:
         async with aiohttp.ClientSession() as session:
             for key in GROQ_KEYS:
                 try:
                     async with session.post(
-                        "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)",
+                        "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {key}"},
                         json={"model": "llama-3.3-70b-versatile", "messages": messages, "max_tokens": 150},
                         timeout=8
@@ -144,43 +124,56 @@ async def get_text_response(user_id, text):
                                 )
                             return ans
                 except: continue
-    
-    return "A-ano... I feel dizzy... (Network Error) 🌸"
+            
+    return "Gomen... network issue. 🌸"
 
-# --- MEDIA GENERATORS ---
+# --- MEDIA GENERATORS (FIXED) ---
 def backup_tts(text):
     try:
+        # Google TTS (Free Backup)
         fp = io.BytesIO()
         tts = gTTS(text=text, lang='en', tld='co.in', slow=False) 
         tts.write_to_fp(fp)
         fp.seek(0)
         return fp
-    except: return None
+    except Exception as e:
+        logger.error(f"GTTS Error: {e}")
+        return None
 
 async def generate_voice(text):
     # 1. ElevenLabs (Real Voice)
     if ELEVENLABS_KEY:
         try:
-            url = f"[https://api.elevenlabs.io/v1/text-to-speech/](https://api.elevenlabs.io/v1/text-to-speech/){HINATA_VOICE_ID}"
+            logger.info("🎙️ Trying ElevenLabs...")
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{HINATA_VOICE_ID}"
             headers = {"xi-api-key": ELEVENLABS_KEY, "Content-Type": "application/json"}
             data = {"text": text, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, headers=headers, timeout=5) as res:
                     if res.status == 200:
-                        return await res.read()
+                        return io.BytesIO(await res.read()) # Return as BytesIO
+                    else:
+                        logger.warning(f"ElevenLabs Limit/Error: {res.status}")
         except: pass
     
-    # 2. Google Backup
+    # 2. Google Backup (Unlimited)
+    logger.info("🔄 Switching to Google TTS Backup...")
     return await asyncio.get_running_loop().run_in_executor(None, backup_tts, text)
 
-async def generate_image(prompt):
+async def generate_image_bytes(prompt):
     try:
-        # Random seed to ensure new image every time
-        seed = random.randint(1, 99999)
-        safe_prompt = f"anime style hinata hyuga {prompt}, cute, high quality, soft lighting, 4k, seed-{seed}"
-        url = f"[https://image.pollinations.ai/prompt/](https://image.pollinations.ai/prompt/){safe_prompt}"
-        return url
-    except: return None
+        # URL Safe Encode
+        safe_prompt = urllib.parse.quote(f"anime style hinata hyuga {prompt}, cute, high quality, 4k")
+        url = f"https://image.pollinations.ai/prompt/{safe_prompt}"
+        
+        # Download Image FIRST (To avoid Telegram URL error)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    return io.BytesIO(await resp.read())
+    except Exception as e:
+        logger.error(f"Image Gen Error: {e}")
+    return None
 
 # --- WEB SERVER ---
 app = Flask('')
@@ -193,8 +186,7 @@ def keep_alive(): Thread(target=run_flask).start()
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
     dev_link = f"<a href='tg://user?id={OWNER_ID}'>FigletAxl</a>"
-    msg = f"N-Naruto-kun? 😳\nI am ready! Created by {dev_link}-kun. 🌸"
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(f"N-Naruto-kun? 😳\nI am ready! Created by {dev_link}-kun. 🌸", parse_mode=ParseMode.HTML)
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
@@ -202,7 +194,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
-    # Trigger Logic
+    # Check Logic
     is_dm = update.effective_chat.type == "private"
     has_name = "hinata" in text.lower()
     is_reply = (update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id)
@@ -211,16 +203,16 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lower_text = text.lower()
     
-    # 1. IMAGE GEN
+    # 1. IMAGE GEN (FIXED)
     if any(x in lower_text for x in ["pic", "photo", "image", "bhejo"]):
         await context.bot.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
         prompt = text.replace("hinata", "").replace("bhejo", "").replace("pic", "").replace("photo", "").strip()
-        img_url = await generate_image(prompt or "smiling")
+        img_bytes = await generate_image_bytes(prompt or "smiling")
         
-        if img_url:
-            await update.message.reply_photo(img_url, caption="Ye lijiye... 👉👈")
+        if img_bytes:
+            await update.message.reply_photo(img_bytes, caption="Ye lijiye... 👉👈")
         else:
-            await update.message.reply_text("Gomen... camera nahi chal raha. 🌸")
+            await update.message.reply_text("Gomen... camera kharab hai. 🌸")
         return
 
     # 2. MODE SWITCHING
@@ -233,27 +225,24 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Wapas text par aa gayi! 📝")
         return
 
-    # 3. REPLY GENERATION
+    # 3. REPLY LOGIC
     mode = await get_mode(user_id)
+    ai_text = await get_text_response(user_id, text)
     
-    # Voice Mode
     if mode == "voice":
         await context.bot.send_chat_action(chat_id, ChatAction.RECORD_VOICE)
-        ai_text = await get_text_response(user_id, text)
-        audio = await generate_voice(ai_text)
+        audio_file = await generate_voice(ai_text)
         
-        if audio:
-            if isinstance(audio, io.BytesIO): await update.message.reply_voice(audio, caption="🌸")
-            else: await update.message.reply_voice(io.BytesIO(audio), caption="🌸")
+        if audio_file:
+            await update.message.reply_voice(audio_file, caption="🌸")
         else:
-            await update.message.reply_text(f"{ai_text}\n(Voice error, text bheja hai) 🌸")
-    
-    # Text Mode (With Double Texting)
+            # Agar voice fail ho gayi toh text bhejo
+            await update.message.reply_text(f"{ai_text}\n(Gala kharab hai aaj... 😣)")
+            
     else:
         await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
-        ai_text = await get_text_response(user_id, text)
         
-        # Double Texting Logic (Realism)
+        # Double Texting Logic
         if len(ai_text) > 80 and random.random() > 0.6:
             parts = ai_text.split(". ", 1)
             await update.message.reply_text(parts[0] + ".")
@@ -263,14 +252,8 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(ai_text)
         
-        # Random Sticker Reply (30% Chance)
-        if random.random() > 0.70:
-            try:
-                await asyncio.sleep(1)
-                if random.choice([True, False]):
-                    await context.bot.send_sticker(chat_id, random.choice(HINATA_STICKERS))
-                else:
-                    await context.bot.send_animation(chat_id, random.choice(HINATA_GIFS))
+        if random.random() > 0.85:
+            try: await context.bot.send_sticker(chat_id, random.choice(HINATA_STICKERS))
             except: pass
 
 # --- MAIN ---
@@ -278,7 +261,6 @@ if __name__ == '__main__':
     keep_alive()
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(MessageHandler(filters.ALL, chat)) # Images/Stickers bhi handle karega
-    
-    print(Fore.YELLOW + "🚀 HINATA ULTIMATE STARTED!")
+    application.add_handler(MessageHandler(filters.ALL, chat))
+    print(Fore.YELLOW + "🚀 OTSUTSUKI HINATA STARTED!")
     application.run_polling()
